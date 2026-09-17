@@ -1,4 +1,4 @@
-import { AlertCircle, Clock3, RefreshCw } from 'lucide-react';
+import { Clock3, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { formatCountdown, formatTime } from '../lib/format';
@@ -19,11 +19,10 @@ interface ProviderCardProps {
 }
 
 export function ProviderCard({ provider, now, active = false, onShowStatistics, onLeaveStatistics, statisticsSide, detachedStatistics = false, onRefresh, refreshing = false, refreshDisabled = false, refreshError }: ProviderCardProps) {
-  const windows = provider.status === 'ready' ? provider.windows.filter((window) => Number.isFinite(window.usedPercent)) : [];
-  const statusLabel = provider.status === 'ready' ? '已连接' : provider.status === 'error' ? '读取失败' : '待获取';
-  const message = provider.message || (provider.status === 'error'
-    ? '暂时无法读取账号用量，请稍后刷新。'
-    : provider.status === 'unavailable'
+  const windows = provider.status !== 'unavailable' ? provider.windows.filter((window) => Number.isFinite(window.usedPercent)) : [];
+  const stale = provider.status === 'error' || Boolean(refreshError);
+  const statusLabel = stale ? '待更新' : provider.status === 'ready' ? '已连接' : '待获取';
+  const message = provider.status === 'error' ? null : provider.message || (provider.status === 'unavailable'
       ? '尚未获取本机账号，请先登录对应服务后刷新。'
       : windows.length === 0 ? '当前账号未返回可用的用量信息。' : null);
 
@@ -44,8 +43,7 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
         <span className={`provider-status status-${provider.status}`}>{statusLabel}</span>
         {onRefresh && <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label={`刷新 ${provider.name} 用量`} title={`刷新 ${provider.name} 用量`} disabled={refreshing || refreshDisabled} onClick={onRefresh}><RefreshCw size={13} className={refreshing ? 'spin' : undefined} /></Button>}
       </div>
-      {refreshError && <div className="provider-message provider-message-error" role="alert"><AlertCircle size={13} aria-hidden="true" /><span>{refreshError}</span></div>}
-      {message && <div className={`provider-message${provider.status === 'error' ? ' provider-message-error' : ''}`} role={provider.status === 'error' ? 'alert' : 'status'}>{provider.status === 'error' && <AlertCircle size={13} aria-hidden="true" />}<span>{message}</span></div>}
+      {message && <div className="provider-message" role="status"><span>{message}</span></div>}
       {windows.length > 0 && <div className="usage-windows">
         {windows.map((window) => {
           const label = window.label.replace(/GPT-5\.3-Codex-Spark/gi, 'Codex-Spark');
@@ -72,7 +70,7 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
           );
         })}
       </div>}
-      {onRefresh && <div className="provider-update-status" aria-live="polite"><Clock3 size={11} aria-hidden="true" /><span>{refreshing ? `正在刷新 ${provider.name}…` : provider.updatedAt ? `更新于 ${formatTime(provider.updatedAt)}` : '尚未获取用量'}</span></div>}
+      {onRefresh && <div className="provider-update-status" aria-live="polite"><Clock3 size={11} aria-hidden="true" /><span>{refreshing ? `正在刷新 ${provider.name}…` : provider.updatedAt ? `${stale ? '上次更新于' : '更新于'} ${formatTime(provider.updatedAt)}` : '尚未获取用量'}</span></div>}
     </article>
   );
 }

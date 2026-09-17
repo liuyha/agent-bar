@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertCircle, Check, Clock3, Info, Layers3, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Settings, Sun, X } from 'lucide-react';
 import { AboutDialog } from './components/AboutDialog';
 import { ProviderCard } from './components/ProviderCard';
+import { ConnectionNotice } from './components/ConnectionNotice';
 import { TokenStatisticsPanel } from './components/TokenStatisticsPanel';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -329,12 +330,12 @@ export default function App() {
     providerRefreshLocks.current.add(provider);
     const version = requestVersion.current;
     setRefreshingProviders((current) => ({ ...current, [provider]: true }));
-    setProviderErrors((current) => ({ ...current, [provider]: null }));
     if (provider === 'codex' && serverStatisticsEnabled && settings?.codexStatisticsSource === 'auto') void accountStatisticsStore.refresh('auto', 'manual');
     try {
       const nextSnapshot = await refreshProviderDashboard(provider);
       if (alive.current) {
         acceptSnapshot(nextSnapshot);
+        setProviderErrors((current) => ({ ...current, [provider]: null }));
         setNow(Date.now());
       }
     } catch (error) {
@@ -460,6 +461,7 @@ export default function App() {
         ) : !isSettingsWindow ? (
           <div ref={usageLayout} className={`usage-layout${statisticsExpanded ? ' has-statistics' : ''}`} onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)} onFocus={cancelStatisticsLeave} onBlur={() => scheduleStatisticsLeave()}>
             <div className="usage-overview">
+            <ConnectionNotice providers={visibleProviders} errors={providerErrors} />
             {visibleProviders.length > 0 ? (
             <div className="provider-list">{visibleProviders.map((provider) => <ProviderCard key={provider.id} provider={provider} now={now} active={selectedProvider?.id === provider.id} statisticsSide={statisticsSide} detachedStatistics={isDesktop} onLeaveStatistics={leaveStatisticsCard} onShowStatistics={(anchor, focus) => openStatistics(provider.id, anchor, focus)} onRefresh={() => { void refreshProvider(provider.id); }} refreshing={refreshingProviders[provider.id]} refreshDisabled={saving || refreshing} refreshError={providerErrors[provider.id]} />)}</div>
             ) : (

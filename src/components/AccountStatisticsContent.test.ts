@@ -64,13 +64,6 @@ describe('account statistics content', () => {
     expect(html).not.toContain('不能据此还原全部用量');
   });
 
-  it('hides period totals only during manual collection and when there is no usable result', () => {
-    for (const html of [render(statistics, null, 'week', true), render(null, '读取失败')]) {
-      expect(html).not.toContain('account-period-metrics');
-      expect(html).not.toContain('role="radiogroup"');
-    }
-  });
-
   it('keeps cached totals during silent refresh', () => {
     const html = render(statistics, null, 'all', false, true);
     expect(html).toContain('account-period-metrics');
@@ -79,10 +72,13 @@ describe('account statistics content', () => {
     expect(html).not.toContain('class="statistics-state"');
   });
 
-  it('shows panel loading and hides cached totals for a manual refresh', () => {
+  it('keeps cached totals and the selected period visible for a manual refresh', () => {
     const html = render(statistics, null, 'all', true, true);
-    expect(html).toContain('正在读取服务端统计');
-    expect(html).not.toContain('account-period-metrics');
+    expect(html).toContain('正在更新服务端统计');
+    expect(html).toContain('account-period-metrics');
+    expect(html).toContain('<dd title="1,000">1K</dd>');
+    expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain('value="all"');
+    expect(html).not.toContain('class="statistics-state"');
   });
 
   it('fetches without a panel loading screen when the automatic first read has no cache', () => {
@@ -90,16 +86,40 @@ describe('account statistics content', () => {
     expect(html).toContain('暂无本地缓存，正在后台获取服务端统计');
     expect(html).not.toContain('正在读取服务端统计');
     expect(html).not.toContain('class="statistics-state"');
-    expect(html).not.toContain('account-period-metrics');
+    expect(html).toContain('account-period-metrics');
+    expect(html).toContain('<dt>累计 Token</dt><dd>—</dd>');
   });
 
   it('keeps validated cached values when background refresh fails', () => {
     const html = render(statistics, '网络暂不可用');
     expect(html).toContain('更新失败：网络暂不可用 当前显示本地缓存');
     expect(html).toContain('role="alert"');
+    expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('role="radiogroup"'));
     expect(html).not.toContain('实际来源：');
     expect(html).toContain('<dd title="1,000">1K</dd>');
     expect(html).not.toContain('正在读取服务端统计');
+  });
+
+  it.each(['day', 'week', 'month', 'year', 'all'] as const)('keeps unknown metrics in the %s layout when fetching fails without a cache', (selectedPeriod) => {
+    const html = render(null, '连接失败', selectedPeriod);
+    expect(html).toContain('role="radiogroup"');
+    expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain(`value="${selectedPeriod}"`);
+    expect(html).toContain('account-period-metrics');
+    expect(html).toContain(`<dt>${selectedPeriod === 'all' ? '累计 Token' : 'Token 合计'}</dt><dd>—</dd>`);
+    expect(html).toContain('<dt>最长任务时长</dt><dd>—</dd>');
+    expect(html).not.toContain('<dd>0');
+    expect(html).not.toContain('当前显示本地缓存');
+    expect(html).not.toContain('class="statistics-state"');
+    expect(html.match(/连接失败/g)).toHaveLength(1);
+    expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('role="radiogroup"'));
+    expect(html).toContain('重新读取');
+  });
+
+  it.each([[true, true], [false, true]])('disables error retries during loading=%s refreshing=%s', (loading, refreshing) => {
+    const html = render(statistics, '连接失败', 'all', loading, refreshing);
+    expect(html).toContain('<dd title="1,000">1K</dd>');
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*aria-busy="true"/);
+    expect(html).toContain('读取中…');
   });
   it.each(['oauth', 'pat', 'cli'] as const)('omits source details and its %s authentication strategy', (source) => {
     const html = render({ ...statistics, source });
@@ -134,7 +154,11 @@ describe('account statistics content', () => {
   it('does not render data from a failed result', () => {
     const failed = render({ ...statistics, status: 'error', message: 'OAuth 认证失败' });
     expect(failed).toContain('OAuth 认证失败');
-    expect(failed).not.toContain('累计 Token');
+    expect(failed).toContain('<dt>累计 Token</dt><dd>—</dd>');
+    expect(failed).not.toContain('1K');
+    expect(failed).not.toContain('2 分 5 秒');
+    expect(failed).not.toContain('2026-09-12');
+    expect(failed.match(/OAuth 认证失败/g)).toHaveLength(1);
     expect(failed).not.toContain('server-account');
   });
 });

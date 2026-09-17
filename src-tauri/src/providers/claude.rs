@@ -14,6 +14,7 @@ use std::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::{blocking::Client, redirect::Policy, StatusCode};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::models::{DataMode, ProviderId, ProviderStatus, ProviderUsage, UsageWindow};
 
@@ -69,6 +70,7 @@ fn empty_usage() -> ProviderUsage {
         message: None,
         windows: Vec::new(),
         updated_at: None,
+        cache_scope: None,
     }
 }
 
@@ -99,6 +101,14 @@ fn fetch(usage: &mut ProviderUsage, now: DateTime<Utc>) -> Result<(), Failure> {
             "Claude 登录已过期，请打开 Claude Code 刷新登录后重试。".into(),
         ));
     }
+
+    // Compare the selected login even when the profile request itself cannot connect.
+    // Only a one-way digest is retained; bearer credentials never enter the snapshot.
+    let mut digest = Sha256::new();
+    digest.update(config_dir.as_os_str().as_encoded_bytes());
+    digest.update([0]);
+    digest.update(credential.token.as_bytes());
+    usage.cache_scope = Some(format!("{:x}", digest.finalize()));
 
     let client = Client::builder()
         .timeout(Duration::from_secs(10))

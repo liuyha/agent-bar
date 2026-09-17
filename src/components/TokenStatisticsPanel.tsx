@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, useSyncExternalStore } from 'react';
-import { AlertCircle, ChartNoAxesCombined, LoaderCircle, RefreshCw } from 'lucide-react';
+import { ChartNoAxesCombined, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NativeSelect } from '@/components/ui/native-select';
 import { getStatisticsState, refreshStatistics, subscribeToStatistics } from '../lib/tokenStatistics';
@@ -9,6 +9,7 @@ import type { createAccountStatisticsStore } from '../lib/accountStatistics';
 import { periodLabels } from '../lib/statisticsPeriods';
 import { AccountStatisticsView } from './AccountStatisticsContent';
 import { StatisticsPeriodSwitch } from './StatisticsPeriodSwitch';
+import { StatisticsErrorNotice } from './StatisticsErrorNotice';
 import type { AppSettings, CodexStatisticsPreference, ProviderId, TokenPeriod, TokenStatistics } from '../types';
 import './TokenStatisticsPanel.css';
 
@@ -22,13 +23,14 @@ interface StatisticsContentProps {
 }
 
 export function StatisticsContent({ statistics, loading, error, selectedPeriod = 'day', onPeriodChange, onRetry }: StatisticsContentProps) {
-  if (loading && !statistics) return <div className="statistics-state" role="status"><LoaderCircle size={22} className="spin" /><p>正在统计本机会话…</p><small>首次读取历史记录可能需要一些时间</small></div>;
-  if (statistics?.status !== 'ready') return <div className="statistics-state" role={error || statistics?.status === 'error' ? 'alert' : 'status'}><AlertCircle size={22} /><p>{error || statistics?.message || '暂无可统计的本机会话记录。'}</p><Button type="button" variant="outline" className="mt-1.5 text-[10px]" onClick={onRetry}><RefreshCw size={13} />重新读取</Button></div>;
-  const period = statistics.periods.find((item) => item.period === selectedPeriod);
+  const ready = statistics?.status === 'ready';
+  const failure = error || (statistics?.status === 'error' ? statistics.message || '读取本机统计失败，请重试。' : null);
+  const period = ready ? statistics.periods.find((item) => item.period === selectedPeriod) : null;
 
   return <>
-    {error && <div className="statistics-notice" role="alert"><p>更新失败：{error} 当前显示上次统计结果。</p><Button type="button" variant="outline" onClick={onRetry}><RefreshCw size={13} />重新读取</Button></div>}
-    {statistics.message && <p className="statistics-notice" role="status">{statistics.message}</p>}
+    {failure && <StatisticsErrorNotice message={`更新失败：${failure}${ready ? ' 当前显示上次统计结果。' : ''}`} busy={loading} onRetry={onRetry} />}
+    {!failure && !ready && <p className="statistics-notice" role="status">{statistics?.message || (loading ? '正在统计本机会话…首次读取历史记录可能需要一些时间。' : '暂无可统计的本机会话记录。')}</p>}
+    {!failure && ready && statistics.message && <p className="statistics-notice" role="status">{statistics.message}</p>}
     <StatisticsPeriodSwitch selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
     <div className="statistics-periods">
       {period ? <section className="statistics-period" key={period.period} aria-label={`${periodLabels[period.period]} Token 统计`}>
@@ -38,9 +40,14 @@ export function StatisticsContent({ statistics, loading, error, selectedPeriod =
         <details className="statistics-token-details"><summary>Token 明细</summary><dl className="statistics-breakdown"><div><dt>输入（含缓存）</dt><dd title={formatCount(period.inputTokens)}>{formatTokens(period.inputTokens)}</dd></div><div><dt>输出</dt><dd title={formatCount(period.outputTokens)}>{formatTokens(period.outputTokens)}</dd></div><div><dt>缓存读取</dt><dd title={formatCount(period.cachedInputTokens)}>{formatTokens(period.cachedInputTokens)}</dd></div>{period.cacheWriteTokens > 0 && <div><dt>缓存写入</dt><dd title={formatCount(period.cacheWriteTokens)}>{formatTokens(period.cacheWriteTokens)}</dd></div>}</dl></details>
         {period.unpricedTokens > 0 && <p className="unpriced-note"><span title={formatCount(period.unpricedTokens)}>{formatTokens(period.unpricedTokens)}</span> Token 缺少可核实单价。{period.estimatedCostUsd === null ? '暂无法估算金额。' : '金额仅含已计价部分。'}</p>}
         {period.estimatedCostUsd !== null && <p className="statistics-footnote">按固定估算汇率 1 美元 ≈ {USD_TO_CNY_ESTIMATE_RATE} 元人民币换算</p>}
+      </section> : !ready || failure ? <section className="statistics-period" aria-label={`${periodLabels[selectedPeriod]} Token 统计`}>
+        <div className="statistics-period-heading"><h3>{periodLabels[selectedPeriod]}</h3><span>—</span></div>
+        <div className="statistics-totals"><div><span>Token 用量</span><strong>—</strong></div><div className="statistics-cost"><span>约等金额 · 人民币</span><strong className="cost-unknown">—</strong></div></div>
+        <dl className="statistics-counts"><div><dt>请求数</dt><dd>—<small>次</small></dd></div><div><dt>会话轮次</dt><dd>—<small>轮</small></dd></div></dl>
+        <details className="statistics-token-details"><summary>Token 明细</summary><dl className="statistics-breakdown">{['输入（含缓存）', '输出', '缓存读取'].map((label) => <div key={label}><dt>{label}</dt><dd>—</dd></div>)}</dl></details>
       </section> : <div className="statistics-state" role="status"><p>暂无{periodLabels[selectedPeriod]}统计数据。</p></div>}
     </div>
-    <div className="statistics-updated">统计于 {formatTime(statistics.updatedAt)}</div>
+    <div className="statistics-updated">统计于 {ready ? formatTime(statistics.updatedAt) : '—'}</div>
   </>;
 }
 
@@ -90,7 +97,7 @@ export function TokenStatisticsPanel({ provider, name, refreshKey, accountStatis
           {codexStatisticsSources.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
         </NativeSelect>
       </div>}
-      <Button variant="outline" size="icon" type="button" aria-label={refreshLabel} aria-busy={refreshing} title={refreshing && !loading ? '后台刷新中，点击显示加载状态' : refreshLabel} disabled={loading} onClick={() => { void (source === 'local' ? refreshStatistics(provider) : accountStatisticsStore.refresh(source, 'manual')); }}><RefreshCw size={13} className={refreshing ? 'spin' : undefined} /></Button>
+      <Button variant="outline" size="icon" type="button" aria-label={refreshLabel} aria-busy={refreshing} title={refreshing ? '正在刷新统计…' : refreshLabel} disabled={loading || refreshing} onClick={() => { void (source === 'local' ? refreshStatistics(provider) : accountStatisticsStore.refresh(source, 'manual')); }}><RefreshCw size={13} className={refreshing ? 'spin' : undefined} /></Button>
     </div>
     {provider === 'codex' && <>
       {saving && <p className="statistics-footnote" role="status">正在保存统计设置…</p>}

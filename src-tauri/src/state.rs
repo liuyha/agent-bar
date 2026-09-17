@@ -6,10 +6,11 @@ use std::{
 };
 
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use crate::{
-    models::{AppSettings, DashboardSnapshot, ProviderId},
+    models::{AppSettings, DashboardSnapshot, ProviderId, ProviderStatus, ProviderUsage},
     providers::{
         collect_snapshot, initial_snapshot, local_providers, pending_provider, UsageProvider,
     },
@@ -20,6 +21,42 @@ struct CachedState {
     settings: AppSettings,
     snapshot: DashboardSnapshot,
     settings_version: u64,
+}
+
+// Keep the existing dashboard JSON shape readable by older versions while storing
+// login scopes separately from the public snapshot sent to webviews.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredDashboard {
+    #[serde(flatten)]
+    snapshot: DashboardSnapshot,
+    #[serde(default)]
+    cache_scopes: Vec<(ProviderId, String)>,
+}
+
+impl StoredDashboard {
+    fn new(snapshot: DashboardSnapshot) -> Self {
+        let cache_scopes = snapshot
+            .providers
+            .iter()
+            .filter_map(|usage| usage.cache_scope.clone().map(|scope| (usage.id, scope)))
+            .collect();
+        Self {
+            snapshot,
+            cache_scopes,
+        }
+    }
+
+    fn into_snapshot(mut self) -> DashboardSnapshot {
+        for usage in &mut self.snapshot.providers {
+            usage.cache_scope = self
+                .cache_scopes
+                .iter()
+                .find(|(id, _)| *id == usage.id)
+                .map(|(_, scope)| scope.clone());
+        }
+        self.snapshot
+    }
 }
 
 pub struct AppState {
@@ -110,12 +147,22 @@ impl AppState {
             }
             settings.enabled_providers = vec![id];
         }
-        let collected = collect_snapshot(&settings, &self.providers, Utc::now());
+        let mut collected = collect_snapshot(&settings, &self.providers, Utc::now());
         let mut cache = self.cache()?;
         // A save can complete while requests are in flight. Its filtered snapshot
         // wins; the settings notification schedules collection with the new selection.
         if cache.settings_version != version {
             return Ok(cache.snapshot.clone());
+        }
+        for usage in &mut collected.providers {
+            if let Some(previous) = cache
+                .snapshot
+                .providers
+                .iter()
+                .find(|item| item.id == usage.id)
+            {
+                preserve_last_usage(usage, previous);
+            }
         }
         let mut snapshot = if let Some(id) = provider {
             let mut snapshot = cache.snapshot.clone();
@@ -142,9 +189,10 @@ impl AppState {
             .ok_or_else(|| "快照版本已达到上限，请重启 AgentBar".to_string())?;
         // Publish only data successfully stored in the user's .agent-bar directory.
         // Hold the state lock through commit so settings changes cannot be overwritten.
-        storage::write_json(&self.snapshot_path, &snapshot)?;
-        let snapshot = storage::read_json::<DashboardSnapshot>(&self.snapshot_path)?
-            .ok_or("保存后未找到本地用量数据，请重试")?;
+        storage::write_json(&self.snapshot_path, &StoredDashboard::new(snapshot))?;
+        let snapshot = storage::read_json::<StoredDashboard>(&self.snapshot_path)?
+            .ok_or("保存后未找到本地用量数据，请重试")?
+            .into_snapshot();
         cache.snapshot = snapshot.clone();
         Ok(snapshot)
     }
@@ -183,9 +231,27 @@ impl AppState {
     }
 }
 
+fn preserve_last_usage(current: &mut ProviderUsage, previous: &ProviderUsage) {
+    if current.status != ProviderStatus::Error
+        || !current.windows.is_empty()
+        || current.cache_scope.is_none()
+        || current.cache_scope != previous.cache_scope
+        || previous.windows.is_empty()
+        || previous.updated_at.is_none()
+        || matches!((&current.account, &previous.account), (Some(current), Some(previous)) if current != previous)
+    {
+        return;
+    }
+    current.windows = previous.windows.clone();
+    current.account = previous.account.clone();
+    current.plan = previous.plan.clone();
+    current.updated_at = previous.updated_at.clone();
+}
+
 fn restore_snapshot(path: &Path, settings: &AppSettings) -> DashboardSnapshot {
-    match storage::read_json::<DashboardSnapshot>(path) {
-        Ok(Some(mut snapshot)) => {
+    match storage::read_json::<StoredDashboard>(path) {
+        Ok(Some(stored)) => {
+            let mut snapshot = stored.into_snapshot();
             // Settings are authoritative even when saved after the last collection.
             snapshot.providers = settings
                 .enabled_providers
@@ -505,6 +571,127 @@ mod tests {
         assert_eq!(codex_calls.load(Ordering::SeqCst), 2);
         assert_eq!(claude_calls.load(Ordering::SeqCst), 1);
         assert_eq!(result.revision, 2);
+    }
+
+    struct SnapshotProvider(Arc<Mutex<ProviderUsage>>);
+
+    impl UsageProvider for SnapshotProvider {
+        fn id(&self) -> ProviderId {
+            ProviderId::Codex
+        }
+
+        fn fetch_usage(&self, _: chrono::DateTime<Utc>) -> Result<ProviderUsage, String> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+    }
+
+    fn successful_usage() -> ProviderUsage {
+        ProviderUsage {
+            status: ProviderStatus::Ready,
+            account: Some("account@example.com".into()),
+            plan: "Pro".into(),
+            message: None,
+            windows: vec![crate::models::UsageWindow {
+                label: "5 小时用量".into(),
+                used_percent: 35.0,
+                resets_at: Some("2026-09-17T06:00:00Z".into()),
+            }],
+            updated_at: Some("2026-09-17T01:00:00Z".into()),
+            cache_scope: Some("same-login".into()),
+            ..pending_provider(ProviderId::Codex)
+        }
+    }
+
+    fn connection_failure() -> ProviderUsage {
+        ProviderUsage {
+            status: ProviderStatus::Error,
+            message: Some("无法连接用量服务".into()),
+            cache_scope: Some("same-login".into()),
+            ..pending_provider(ProviderId::Codex)
+        }
+    }
+
+    #[test]
+    fn failed_refresh_keeps_last_usage_across_repeated_failures_and_restart_then_recovers() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings_path = directory.path().join("settings.json");
+        let usage = Arc::new(Mutex::new(successful_usage()));
+        let state = AppState::load_with_providers(
+            settings_path.clone(),
+            vec![Box::new(SnapshotProvider(usage.clone()))],
+        )
+        .unwrap();
+        let before = state.refresh().unwrap();
+        *usage.lock().unwrap() = connection_failure();
+        let failed = state.refresh().unwrap();
+        let retained = &failed.providers[0];
+        assert_eq!(retained.status, ProviderStatus::Error);
+        assert_eq!(retained.message.as_deref(), Some("无法连接用量服务"));
+        assert_eq!(retained.windows, before.providers[0].windows);
+        assert_eq!(retained.account, before.providers[0].account);
+        assert_eq!(retained.plan, before.providers[0].plan);
+        assert_eq!(retained.updated_at, before.providers[0].updated_at);
+        // The scope digest is persisted privately, never exposed in dashboard IPC.
+        assert!(!serde_json::to_string(&failed)
+            .unwrap()
+            .contains("same-login"));
+        let restored = AppState::load_with_providers(
+            settings_path,
+            vec![Box::new(SnapshotProvider(usage.clone()))],
+        )
+        .unwrap();
+        let repeated = restored.refresh_provider(ProviderId::Codex).unwrap();
+        assert_eq!(repeated.providers[0], *retained);
+        assert_eq!(repeated.revision, failed.revision + 1);
+
+        let mut recovered = successful_usage();
+        recovered.windows[0].used_percent = 40.0;
+        recovered.updated_at = Some("2026-09-17T02:00:00Z".into());
+        *usage.lock().unwrap() = recovered.clone();
+        assert_eq!(restored.refresh().unwrap().providers[0], recovered);
+    }
+
+    #[test]
+    fn failed_refresh_never_reuses_another_login_or_invalidated_authentication() {
+        let directory = tempfile::tempdir().unwrap();
+        let usage = Arc::new(Mutex::new(successful_usage()));
+        let state = AppState::load_with_providers(
+            directory.path().join("settings.json"),
+            vec![Box::new(SnapshotProvider(usage.clone()))],
+        )
+        .unwrap();
+        let mut changed_scope = connection_failure();
+        changed_scope.cache_scope = Some("another-login".into());
+        let mut unknown_scope = connection_failure();
+        unknown_scope.cache_scope = None;
+        let mut changed_account = connection_failure();
+        changed_account.account = Some("another@example.com".into());
+        let mut expired = connection_failure();
+        expired.status = ProviderStatus::Unavailable;
+        expired.message = Some("登录已失效".into());
+        for failure in [changed_scope, unknown_scope, changed_account, expired] {
+            *usage.lock().unwrap() = successful_usage();
+            state.refresh().unwrap();
+            *usage.lock().unwrap() = failure.clone();
+            assert_eq!(
+                state.refresh_provider(ProviderId::Codex).unwrap().providers[0],
+                failure
+            );
+        }
+    }
+
+    #[test]
+    fn first_connection_failure_keeps_unknown_usage_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let failure = connection_failure();
+        let state = AppState::load_with_providers(
+            directory.path().join("settings.json"),
+            vec![Box::new(SnapshotProvider(Arc::new(Mutex::new(
+                failure.clone(),
+            ))))],
+        )
+        .unwrap();
+        assert_eq!(state.refresh().unwrap().providers[0], failure);
     }
 
     #[test]

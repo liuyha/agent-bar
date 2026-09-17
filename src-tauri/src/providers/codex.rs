@@ -40,18 +40,49 @@ impl super::UsageProvider for CodexProvider {
 
     fn fetch_usage(&self, now: DateTime<Utc>) -> Result<ProviderUsage, String> {
         let home = auth::resolve_home(env::var_os("CODEX_HOME"), env::var_os("HOME"));
+        let scope = activity::cache_scope_key(home.as_deref());
+        let credentials = auth::load(home.as_deref());
+        let mut authentication_failed = false;
+        let usable_credentials = credentials.as_ref().is_ok_and(|credentials| {
+            credentials.pat.is_some()
+                || credentials
+                    .oauth
+                    .as_ref()
+                    .is_some_and(|oauth| !oauth.needs_refresh(now))
+        });
         // Preserve the CLI's custom backend configuration without forwarding a
         // native OpenAI token to a configurable destination in this process.
-        if auth::uses_custom_backend(home.as_deref()) {
-            return fetch_cli_usage(now, home.as_deref());
-        }
-        let credentials = auth::load(home.as_deref());
-        fetch_with_strategies(
-            credentials,
-            now,
-            |credential| http::fetch(credential, now),
-            || fetch_cli_usage(now, home.as_deref()),
-        )
+        let result = if auth::uses_custom_backend(home.as_deref()) {
+            fetch_cli_usage(now, home.as_deref())
+        } else {
+            fetch_with_strategies(
+                credentials,
+                now,
+                |credential| {
+                    let result = http::fetch(credential, now);
+                    authentication_failed |= matches!(result, Err(http::FetchError::Unauthorized));
+                    result
+                },
+                || fetch_cli_usage(now, home.as_deref()),
+            )
+        };
+        let mut usage = result.unwrap_or_else(|message| ProviderUsage {
+            status: ProviderStatus::Error,
+            message: Some(message),
+            ..unavailable("")
+        });
+        let current_scope = activity::cache_scope_key(home.as_deref());
+        // If the login changes in flight, do not bind this result to the new login.
+        // A later successful collection will establish its own stable scope.
+        usage.cache_scope = if scope == current_scope
+            && (usage.status == ProviderStatus::Ready
+                || (usable_credentials && !authentication_failed))
+        {
+            current_scope
+        } else {
+            None
+        };
+        Ok(usage)
     }
 }
 
@@ -156,6 +187,7 @@ fn unavailable(message: &str) -> ProviderUsage {
         message: Some(message.into()),
         windows: vec![],
         updated_at: None,
+        cache_scope: None,
     }
 }
 

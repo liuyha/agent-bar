@@ -129,6 +129,9 @@ pub struct ProviderUsage {
     pub message: Option<String>,
     pub windows: Vec<UsageWindow>,
     pub updated_at: Option<String>,
+    /// Credential scope stays inside Rust and its private disk envelope, never IPC.
+    #[serde(skip)]
+    pub(crate) cache_scope: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

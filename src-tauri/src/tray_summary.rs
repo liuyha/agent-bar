@@ -117,6 +117,7 @@ mod tests {
             message: None,
             windows,
             updated_at: None,
+            cache_scope: None,
         }
     }
 

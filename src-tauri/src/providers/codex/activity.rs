@@ -39,7 +39,11 @@ fn scope_key(home: Option<&Path>) -> String {
 /// unreadable, invalid, or API-key-only auth must never share an empty scope.
 pub(crate) fn account_statistics_cache_scope_key() -> Option<String> {
     let home = auth::resolve_home(env::var_os("CODEX_HOME"), env::var_os("HOME"));
-    let (key, cacheable) = scope_keys(home.as_deref());
+    cache_scope_key(home.as_deref())
+}
+
+pub(super) fn cache_scope_key(home: Option<&Path>) -> Option<String> {
+    let (key, cacheable) = scope_keys(home);
     cacheable.then_some(key)
 }
 

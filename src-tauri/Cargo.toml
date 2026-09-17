@@ -3,6 +3,7 @@ name = "agentbar"
 version = "0.1.0"
 description = "A lightweight desktop usage dashboard for AI coding agents"
 authors = ["AgentBar contributors"]
+license = "MIT"
 edition = "2021"
 
 [lib]

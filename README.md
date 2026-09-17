@@ -1,148 +1,142 @@
-# AgentBar
+<p align="center">
+  <img src="public/agentbar.svg" width="80" height="80" alt="AgentBar 标志" />
+</p>
 
-使用 **Tauri 2 + React 19 + TypeScript + Vite + shadcn/ui + Tailwind CSS + Rust** 构建的 AI 工具用量托盘应用。读取本机已登录的 Codex、Claude Code 账号，在菜单栏查看真实用量。
+<h1 align="center">AgentBar</h1>
 
-没有演示模式。Codex 参照 CodexBar 的自动采集路径，读取本机 PAT / OAuth 查询账号额度，并在适用时回退到官方 CLI app-server；Claude 使用 Claude Code 本地 OAuth 登录态查询官方订阅用量。未登录或无法读取时显示对应状态，不填充示例数据。采集逻辑使用 Rust 实现，未分发 CodexBar 的 Swift 源码或 CLI。macOS 是首个开发与验证平台；Windows、Linux 保留 Tauri 工程骨架，兼容性仍需在对应系统验证。
+<p align="center"><strong>AI 用量，一目了然。</strong></p>
+<p align="center">在菜单栏查看 Codex 与 Claude Code 的剩余额度、重置时间和 Token 使用统计。</p>
 
-## 当前功能
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#数据与隐私">数据与隐私</a> ·
+  <a href="#开发与贡献">开发与贡献</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-- 本机真实账号、套餐、用量比例与重置倒计时；支持多个用量窗口及单服务错误提示。
-- 悬停服务卡片或用鼠标／键盘激活统计入口，以独立附属窗口展开今日、本周、本月、本年、全部的 **Token 用量、约等金额（人民币）、请求数、会话轮次**。统计窗口优先紧贴主面板右侧，空间不足时切换左侧；主面板保持原尺寸。浏览器预览仍采用页内详情。
-- 原生层按鼠标实际位置判断：停留在当前服务卡片、统计窗口或两者之间的窄过渡缝时保持展开；离开约 250ms 后自动收起，卡片下方空白处不保留详情。点击后留下的焦点不会阻止鼠标移出收起；键盘可通过统计入口和方向键进入，Esc 逐级返回。
-- macOS 菜单栏图标旁显示“剩余占比 距离重置时长”，如 `60% 2天 20小时`。优先显示 Codex 主额度，不可用时显示 Claude；用量更新时同步，倒计时每 30 秒重算。
-- 启动后收起到菜单栏／系统托盘；左键点击图标，在图标旁展开主面板，再次点击或点击两窗之外隐藏整组面板。
-- 面板无标题栏，随托盘所在屏幕定位；右键菜单提供显示面板、偏好设置、刷新与退出入口；偏好设置在独立窗口打开，首页仅展示用量。
-- 手动刷新与 Rust 后台定时刷新，窗口隐藏后仍继续刷新。
-- 账号用量快照和历史统计保存在用户目录 `~/.agent-bar/`，重启先恢复已保存的用量，再后台更新真实数据。
-- 设置服务启用状态、60／300／900 秒刷新间隔，以及跟随系统／浅色／深色主题。
-- 桌面设置由 Rust 保存为本地 JSON；浏览器预览使用独立的 `localStorage`。
+AgentBar 是一款基于 **Tauri 2、React、TypeScript 和 Rust** 的开源桌面应用。它读取本机已有的工具登录态，将账号额度与使用历史集中到菜单栏，方便你在工作时随时查看。目前以 **macOS** 为主要开发和验证平台。
 
-账号登录由各工具自行完成；AgentBar 读取现有登录态。开机启动、自动更新、应用签名和安装包分发尚未接入。Linux 的 Tauri 托盘不提供点击事件，需通过托盘菜单“显示面板”打开。当前检查及各平台实际验收范围见 [验证记录](docs/verification.md)。
+## 核心功能
 
-## 开发环境
+- **额度随时可见**：展示账号、套餐、各用量窗口的剩余比例和重置倒计时；macOS 菜单栏直接显示额度摘要。
+- **按时段查看统计**：今日、本周、本月、本年、全部；本机记录汇总 Token、约等金额、请求数和会话轮次。
+- **两种统计来源**：Codex 支持本机记录与账号服务端统计；Claude Code 支持本机记录。
+- **独立统计窗口**：悬停服务卡片即可展开详情，支持键盘操作；偏好设置从托盘右键菜单打开。
+- **后台刷新与本地缓存**：支持手动刷新和 1／5／15 分钟定时刷新，重启后恢复缓存，并标明数据更新时间。
+- **跟随你的桌面**：支持浅色、深色和跟随系统主题，可单独启用或关闭服务。
 
-- 推荐 Node.js 24 LTS；使用 `package.json` 的 `packageManager` 所锁定的 pnpm 11.24.0，可用 `npm install --global pnpm@11.24.0` 安装。Node 24 的发布状态和 pnpm 11 兼容性分别见 [Node.js 发布表](https://nodejs.org/en/about/previous-releases)及 [pnpm 兼容表](https://pnpm.io/installation#compatibility)。
-- 桌面开发需要 Rust stable，通过 [rustup](https://www.rust-lang.org/tools/install) 安装。`rust-toolchain.toml` 声明工具链及 `rustfmt`、`clippy` 组件。
-- macOS 安装 Xcode Command Line Tools：`xcode-select --install`。
-- Windows 需要 Microsoft C++ Build Tools 和 WebView2；Linux 需要 WebKitGTK 等系统库。具体依赖以 [Tauri 官方环境准备](https://v2.tauri.app/start/prerequisites/)为准。
+## 支持范围
 
-仅运行浏览器预览时不需要 Rust 和桌面系统依赖。
+| 工具 | 账号额度 | 本机 Token 统计 | 服务端 Token 统计 |
+| --- | --- | --- | --- |
+| Codex | 本机订阅登录态；自动选择可用认证方式 | 会话与归档日志，也包含 pi / OMP 的 `openai-codex` 记录 | 当前账号返回的活动汇总与每日记录 |
+| Claude Code | 本机 OAuth 订阅登录态 | 本机 `projects` 会话日志 | 暂不支持 |
 
-## 界面组件
+账号登录和切换由原工具完成，AgentBar 读取现有登录态。API key 登录不提供订阅额度；本机历史统计独立于额度接口，仍取决于可读取的日志。
 
-`src/components/ui/` 保存按 AgentBar 紧凑尺寸调整的 shadcn/ui 源码（Button、Checkbox、NativeSelect、Progress），`components.json` 配置组件路径，`@/` 指向 `src/`。组件来源为 [shadcn/ui 官方仓库](https://github.com/shadcn-ui/ui)，许可证保留在 [licenses/shadcn-ui-MIT.txt](licenses/shadcn-ui-MIT.txt)。设置、刷新操作、剩余额度和统计时段已使用这些组件或 Tailwind 工具类。窗口布局及复杂统计排版继续由现有 CSS 管理。
+| 平台 | 当前状态 |
+| --- | --- |
+| macOS | 主要开发与验证平台，构建最低版本为 macOS 12 |
+| Windows / Linux | 保留 Tauri 工程配置，尚未完成平台兼容性验证 |
 
-采用 **Tailwind CSS 3.4** 与 PostCSS，配合 `tailwind-merge` 2.x；保留现有样式重置，关闭 Preflight。主题颜色映射到已有 CSS 变量，因此浅色、深色和跟随系统共用同一套组件。现有构建目标包含 Safari 15 / macOS 12；[Tailwind CSS 4 需要 Safari 16.4 及以上](https://tailwindcss.com/docs/compatibility)，升级前需同步评估 WebView 兼容范围。统计来源使用原生下拉框，避免浮层脱离悬停区域后触发详情收起。
+当前提供源码构建流程，应用签名、自动更新和开机启动尚未接入。部分用量接口属于上游内部接口，兼容性可能随上游版本变化。
 
-## 运行
+## 快速开始
 
-在项目根目录执行：
+### 1. 准备环境
+
+| 依赖 | 要求 |
+| --- | --- |
+| Node.js | 24 或更高版本 |
+| pnpm | 11.24.0，与 `package.json` 中的 `packageManager` 保持一致 |
+| Rust | 通过 [rustup](https://www.rust-lang.org/tools/install) 安装 stable，工具链配置见 `rust-toolchain.toml` |
+| 系统依赖 | macOS 需要 Xcode Command Line Tools；其他平台参考 [Tauri 环境准备](https://v2.tauri.app/start/prerequisites/) |
+
+macOS 安装命令行工具：
 
 ```sh
+xcode-select --install
+```
+
+请先在需要查看的 Codex 或 Claude Code 中完成登录。
+
+### 2. 启动应用
+
+```sh
+git clone https://github.com/liuyha/agent-bar.git
+cd agent-bar
+npm install --global pnpm@11.24.0
 pnpm install --frozen-lockfile
 pnpm run doctor
-```
-
-浏览器预览：
-
-```sh
-pnpm dev
-```
-
-打开终端给出的本地地址；偏好设置预览地址为 `/#settings`。浏览器只能显示设置和“请使用桌面端”的账号状态，不会读取本机凭据或生成虚构用量。真实账号、托盘、后台刷新需要桌面运行。
-
-启动桌面应用：
-
-```sh
 pnpm desktop:dev
 ```
 
-Tauri 会启动 Vite 并编译 Rust。首次运行需要下载 Rust 依赖，耗时取决于网络与构建环境。桌面脚本会自动识别默认的 `~/.cargo/bin`，无需修改系统 `PATH`。运行桌面开发模式前，请先停止单独运行的 `pnpm dev`，避免占用同一个 1420 端口。
+首次启动需要编译 Rust 依赖。应用启动后驻留菜单栏，点击 AgentBar 柱状图标打开主面板；右键菜单可进入偏好设置、刷新用量或退出。Linux 需从托盘菜单选择“显示面板”。
 
-应用首次启动时不弹出窗口，请点击菜单栏／系统托盘中的 AgentBar 柱状图标查看统计。应用采用单实例模式，再次启动会展开已有面板。开发前请从托盘菜单退出已运行的打包版本，否则只会恢复已有面板。
+应用采用单实例模式。开发前请先从托盘退出已经运行的打包版本；如果单独启动了 `pnpm dev`，也请先停止它，避免占用桌面开发所需的 `1420` 端口。
 
-## 本机账号读取
+### 3. 构建桌面应用
 
-- **Codex**：读取 `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`），依次使用可用的 PAT、OAuth 和受控 CLI 回退。OAuth 直接查询账号用量，PAT 先确认身份再查询；CLI 路径使用 `account/read` 和 `account/rateLimits/read`。保留服务端返回的实际窗口和模型专属额度。网络错误、限流不会触发额外 CLI 请求；API key 模式没有 ChatGPT 订阅限额。
-- **Claude**：先通过 Claude Code 登录订阅账号。macOS 从 Keychain 的 Claude Code 登录项读取，其他平台读取本地凭据文件；API key 或代理模式不提供 Claude 订阅限额。
-- 凭据留在 Rust／官方 CLI 内，前端只显示账号元信息和用量。AgentBar 不修改共享 `auth.json`；需要恢复原生登录时交给官方 CLI。未登录、凭据过期、服务错误都有明确提示。
-- 关闭面板仍会后台刷新；修改启用服务后立即按新设置采集。
+```sh
+pnpm desktop:build
+```
 
-## 本地历史统计
+产物位于 `src-tauri/target/release/bundle/`，安装包格式随构建平台而定。该命令构建本机平台的应用，不代表已完成签名或其他平台验证。
 
-Codex 使用统计提供 **本机记录／服务端** 两个来源，均可切换今日／本周／本月／本年／全部。程序根据本机登录态自动选择服务端认证和查询方式。服务端按已返回每日记录汇总所选时段，“全部”采用服务端累计值，缺失日期不补零。配置和数据边界见 [账号服务端使用统计](docs/account-statistics.md)。
+仅预览前端时可运行 `pnpm dev`，打开 `http://127.0.0.1:1420`；偏好设置地址为 `/#settings`。浏览器预览不需要 Rust，也无法读取本机账号或会话日志，会显示桌面端使用提示。
 
-统计读取 Codex 的 `sessions`、`archived_sessions` 和 Claude Code 的 `projects` 会话记录，尊重 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`。Codex 还汇总 pi / OMP 会话中的 `openai-codex` 用量。无需账号额度接口成功也能查看本地历史，普通浏览器无法读取这些记录。
+## 数据与隐私
 
-- 今日从本地时间零点开始；本周从周一零点开始；本月从一号零点开始；本年从 1 月 1 日零点开始；全部覆盖本机保留的所有历史记录。均统计至读取时刻，跨年日期显示年份。
-- Token 数量按十进制自动显示 K／M／B 单位，悬停可查看精确值；请求数和会话轮次保持完整整数。
-- Token 总量为输入（含缓存读取与写入）加输出。推理 Token 已包含在输出中，不重复累加。
-- 请求数按可识别的模型调用去重；会话轮次按用户发起的交互轮次统计，不将一轮中的多个模型请求或工具调用算成多轮。缺少可识别记录的计数显示 `—`，真实零值显示 `0`。
-- Codex、Claude 历史分别使用 `~/.agent-bar/` 中的 SQLite 保存标准化用量，支持跨启动复用；Codex 还保存解析检查点以增量读取追加日志。分叉继承记录、累计快照和请求明细分别处理，避免重复计算。每次加载或刷新仍同步源日志并按当前日历重新统计。
-- 金额按公开模型 Standard API 美元单价估算，再以固定估算汇率 **1 USD ≈ 7 CNY** 换算为人民币，界面显示汇率说明。该汇率是选定的粗略估算值，不是实时行情或历史逐日汇率；金额不代表订阅账单或实际扣费。金额以 `¥` 和两位小数展示，非零且不足人民币 0.01 元时显示 `< ¥0.01`。部分 Token 缺少单价时仅显示已计价部分，并明确标注；全部无法计价时显示“暂无法估算”。计价表和适用边界见 [计价依据](docs/token-pricing.md)。
-- 仅涵盖本机保留的日志，可能包含多个账号，无法代表其他设备或云端全部使用情况。缺失日志与读取错误不显示为零用量。
+凭据读取、用量查询和日志解析在 Rust 或官方 CLI 中完成，前端只接收账号元信息与归一化统计。AgentBar 不要求你在界面中填写 API key，不自行改写共享登录文件；额度和服务端统计查询需要访问对应服务的接口。
 
-## 数据存储
+| 数据 | 默认位置与用途 |
+| --- | --- |
+| Codex 登录态与日志 | `~/.codex/`，支持 `CODEX_HOME` |
+| Claude Code 登录态与日志 | macOS 优先读取 Keychain，回退本地凭据文件；其他平台读取本地凭据。日志默认在 `~/.claude/projects/`，支持 `CLAUDE_CONFIG_DIR` |
+| AgentBar 统计缓存 | `~/.agent-bar/`，保存账号用量快照、SQLite 历史缓存和统计汇总 |
+| 偏好设置 | Tauri 应用配置目录中的 `settings.json`；macOS 为 `~/Library/Application Support/dev.agentbar.desktop/settings.json` |
 
-桌面数据统一保存在用户目录 `~/.agent-bar/`：
+统计缓存不保存原始凭据、接口原始响应或对话正文，但包含账号元信息和用量数据。macOS / Unix 上，数据目录权限为 `0700`，JSON 与 SQLite 文件权限为 `0600`。
 
-- `dashboard.json`：账号用量展示快照，包含账号元信息、套餐、额度和更新时间。启动时按当前启用服务恢复；刷新写入并读回成功后才更新界面，存储失败保留原快照。
-- `codex-token-history.sqlite3`、`claude-token-history.sqlite3`：标准化历史统计缓存。
-- `codex-token-statistics.json`、`claude-token-statistics.json`：本次聚合结果，写入后读回供程序使用。
-- `codex-account-statistics.json`：服务端成功统计缓存，按当前登录及配置范围核验后恢复；失败不覆盖成功数据。
+理解统计结果时，请留意以下口径：
 
-本机统计再次展开时立即显示该服务上次缓存的结果，并在后台更新；只有没有缓存的首次加载显示“正在统计本机会话”。程序重新启动后先读取已保存的统计汇总，后台更新失败时保留已有结果并提示重试。
+- **本机记录**仅覆盖本机保留的日志，可能包含多个账号；本周从本地时间周一开始，缺失数据与真实零值分别展示。
+- **服务端统计**以当前账号实际返回的数据为准，可能存在延迟或日期缺失，与本机统计分开展示，不相加、不补零。
+- **约等金额**按内置 Standard API 美元价格估算，并以固定汇率 **1 USD ≈ 7 CNY** 展示人民币。它不代表订阅账单或实际扣费；缺少模型价格时会标明无法估算或仅部分计价。
 
-服务端统计启动先读缓存，有缓存不立即请求，无缓存才静默获取。桌面独立统计窗口常驻，由它统一按设置周期后台刷新，主窗口和设置窗口不重复轮询；收起详情仍保留刷新生命周期。自动刷新仅按钮旋转，手动刷新才显示面板 loading。刷新失败时保留仍匹配当前账号的成功缓存及原始采集时间。
+## 开发与贡献
 
-数据不包含账号凭据、接口原始响应或对话正文。macOS / Unix 目录权限为 `0700`，JSON 和 SQLite 文件为 `0600`。旧应用缓存保留，新目录首次使用时从源日志重建。设置仍保存在 Tauri 应用配置目录的 `settings.json`，浏览器预览仍使用独立的 `localStorage`。
-
-## 常用命令
+欢迎通过 [Issues](https://github.com/liuyha/agent-bar/issues) 反馈问题，或提交 [Pull Request](https://github.com/liuyha/agent-bar/pulls)。问题报告请附操作系统、应用版本、复现步骤和脱敏后的错误信息；涉及界面修改时可附截图。
 
 | 命令 | 用途 |
 | --- | --- |
-| `pnpm dev` | 启动 Vite 浏览器预览 |
-| `pnpm desktop:dev` | 启动 Tauri 桌面开发模式 |
-| `pnpm typecheck` | TypeScript 类型检查 |
-| `pnpm lint` | ESLint 检查 |
-| `pnpm test` | 前端自动化测试 |
-| `pnpm build` | 构建前端静态资源 |
-| `pnpm check` | 执行前端类型、Lint、测试和构建检查 |
-| `pnpm rust:check` | 执行 Rust 格式检查、Clippy 和测试 |
-| `pnpm desktop:build` | 在当前系统构建桌面应用 |
-| `pnpm run doctor` | 检查本机 Tauri 开发环境（`run` 避免调用 pnpm 内置的同名命令） |
+| `pnpm run doctor` | 检查本机开发环境；使用 `run` 避免调用 pnpm 内置同名命令 |
+| `pnpm dev` | 浏览器预览 |
+| `pnpm desktop:dev` | 桌面开发 |
+| `pnpm check` | 前端类型检查、ESLint、测试和生产构建 |
+| `pnpm rust:check` | Rust 格式检查、Clippy 和测试 |
+| `pnpm desktop:build` | 构建当前平台桌面应用 |
 
-提交依赖变更时一并维护 `pnpm-lock.yaml` 与 `src-tauri/Cargo.lock`。桌面构建产物不代表已经完成签名、跨平台验证或发布。
-
-## 工程结构
+提交前运行与改动相关的检查；涉及原生窗口、托盘或账号读取时，还需在桌面端验证。依赖变更应同步维护对应的 `pnpm-lock.yaml` 或 `src-tauri/Cargo.lock`。CI 配置见 [检查工作流](.github/workflows/ci.yml)。
 
 ```text
-src/
-  components/       用量面板与设置等 React 组件
-  components/StatisticsWindow.tsx  独立统计窗口、跨窗口数据与显示状态同步
-  lib/api.ts        Tauri 调用与浏览器不可用状态
-  lib/panel.ts      面板操作顺序、状态事件与渲染确认
-  lib/useAccountStatistics.ts  服务端统计唯一刷新生命周期
-  lib/format.ts     展示格式化
-  types/index.ts    前端数据契约
-src-tauri/
-  src/lib.rs        Rust 命令、托盘、窗口与后台刷新
-  src/panel.rs      主面板与附属统计窗口定位、级联交互与焦点组
-  src/models.rs     Rust 数据契约和设置校验
-  src/state.rs      应用状态与设置持久化
-  src/storage.rs    用户数据目录、私有文件权限与原子读写
-  src/providers.rs  Provider 接口与并行采集
-  src/providers/   Codex / Claude 本机账号适配
-  capabilities/     WebView 权限声明
-  tauri.conf.json   桌面窗口与构建配置
-docs/
-  architecture.md   模块边界、通信契约与迭代路线
+src/                 React 界面、状态管理与 Tauri 通信
+src-tauri/src/       Rust 账号适配、统计、存储与原生窗口
+src-tauri/icons/     桌面应用与托盘图标
+scripts/            开发环境检查与桌面命令入口
+docs/               架构、统计口径与第三方声明
+licenses/           第三方许可证
 ```
 
-扩展 Provider 前请先阅读 [架构说明](docs/architecture.md)。桌面采集逻辑放在 Rust 中，React 只依赖统一的用量模型。
+进一步了解实现与数据边界：
 
-## 调研与许可
+- [架构说明](docs/architecture.md)：模块职责、数据流和扩展约定。
+- [账号服务端统计](docs/account-statistics.md)：来源、刷新机制和指标含义。
+- [Token 计价依据](docs/token-pricing.md)：内置价格表、核验日期和估算边界。
+- [第三方声明](docs/third-party-notices.md)：参考项目、组件许可和图标来源。
 
-托盘能力基于 [Tauri 系统托盘 API](https://v2.tauri.app/learn/system-tray/)。后续可按需求评估独立 Rust 采集或 [sidecar](https://v2.tauri.app/develop/sidecar/)；当前未选择或实现 sidecar 集成。
+## 许可证与致谢
 
-Codex 额度与历史统计参照 [CodexBar](https://github.com/steipete/CodexBar) 实现，参考版本、对齐范围和验证见 [Codex 对齐说明](docs/codex-alignment.md)，上游 MIT 声明保留于 [第三方声明](docs/third-party-notices.md)。AgentBar 的开源许可证尚未确定。
+AgentBar 采用 [MIT License](LICENSE)。第三方代码、资源和品牌标志遵循各自声明，详见 [第三方声明](docs/third-party-notices.md)。
+
+感谢 [CodexBar](https://github.com/steipete/CodexBar) 提供账号采集与历史统计的实现参考，以及 Tauri、React、shadcn/ui 等开源项目。AgentBar 是独立项目，与 OpenAI、Anthropic 无隶属或背书关系。

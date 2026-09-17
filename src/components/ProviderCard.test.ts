@@ -15,12 +15,15 @@ function render(overrides: Partial<ProviderUsage> = {}): string {
 }
 
 describe('account usage states', () => {
-  it('keeps refresh progress and failures inside the targeted service card', () => {
+  it('keeps refresh progress and cached usage in the targeted card without repeating the top-level error', () => {
     const html = renderToStaticMarkup(createElement(ProviderCard, { provider: account, now: 0, onRefresh: () => {}, refreshing: true, refreshError: '本卡片刷新失败' }));
     expect(html).toContain('aria-label="刷新 Codex 用量"');
     expect(html).toContain('disabled=""');
     expect(html).toContain('正在刷新 Codex');
-    expect(html).toContain('本卡片刷新失败');
+    expect(html).not.toContain('本卡片刷新失败');
+    expect(html).not.toContain('role="alert"');
+    expect(html).toContain('待更新');
+    expect(html).toContain('100% 剩余');
     const other = renderToStaticMarkup(createElement(ProviderCard, { provider: { ...account, id: 'claude', name: 'Claude' }, now: 0, onRefresh: () => {} }));
     expect(other).toContain('aria-label="刷新 Claude 用量"');
     expect(other).not.toContain('disabled=""');
@@ -70,12 +73,30 @@ describe('account usage states', () => {
     expect(html).not.toContain('role="progressbar"');
   });
 
-  it('shows provider errors without retaining a misleading usage meter', () => {
-    const html = render({ status: 'error', message: '登录已过期，请重新登录 Codex 后刷新。' });
-    expect(html).toContain('读取失败');
-    expect(html).toContain('登录已过期');
-    expect(html).toContain('role="alert"');
+  it('preserves the last successful usage after a connection failure and leaves its error to the banner', () => {
+    const html = renderToStaticMarkup(createElement(ProviderCard, {
+      provider: { ...account, status: 'error', message: '网络连接失败' }, now: 0, onRefresh: () => {},
+    }));
+    expect(html).toContain('待更新');
+    expect(html).toContain('account@example.com');
+    expect(html).toContain('Plus');
+    expect(html).toContain('100% 剩余');
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('上次更新于');
+    expect(html).not.toContain('网络连接失败');
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain('已连接');
+  });
+
+  it('does not invent usage when a failure has no validated previous result', () => {
+    const html = renderToStaticMarkup(createElement(ProviderCard, {
+      provider: { ...account, status: 'error', account: null, plan: '', windows: [], updatedAt: null, message: '登录已过期' }, now: 0, onRefresh: () => {},
+    }));
+    expect(html).toContain('待更新');
+    expect(html).toContain('尚未获取用量');
     expect(html).not.toContain('role="progressbar"');
+    expect(html).not.toContain('account@example.com');
+    expect(html).not.toContain('role="alert"');
   });
 
   it('does not treat missing or malformed windows as zero usage', () => {

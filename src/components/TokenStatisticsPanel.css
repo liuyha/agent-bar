@@ -3,6 +3,10 @@
 .statistics-title > h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .statistics-source-control { display: flex; flex-shrink: 0; align-items: center; gap: 6px; min-width: 0; margin-left: auto; color: var(--secondary); font-size: 10px; }
 .statistics-source-control > label { white-space: nowrap; }
+.statistics-error-notice { display: flex; align-items: flex-start; gap: 7px; padding: 9px; border: 1px solid color-mix(in srgb, var(--warning) 25%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--warning) 7%, transparent); color: var(--warning); }
+.statistics-error-notice > svg { flex-shrink: 0; margin-top: 2px; }
+.statistics-error-notice > p { flex: 1; min-width: 0; margin: 0; }
+.statistics-error-notice > button { flex-shrink: 0; height: auto; min-height: 24px; padding: 4px 6px; font-size: 9px; }
 .account-statistics-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card-bg); }
 .account-statistics-metrics dt { font-size: 9px; color: var(--secondary); }
 .account-statistics-metrics dd { margin: 6px 0 0; font-size: 15px; font-weight: 620; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

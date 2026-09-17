@@ -35,8 +35,7 @@ describe('token statistics', () => {
       expect(header).toMatch(/<button[^>]*aria-label="刷新服务端统计"[^>]*aria-busy="true"[^>]*>[^]*?<svg[^>]*class="[^"]*spin/);
       const button = header?.match(/<button[^>]*aria-label="刷新服务端统计"[^>]*>/)?.[0];
       // Tailwind's disabled: utility classes do not make the button disabled.
-      if (mode === 'manual') expect(button).toMatch(/\sdisabled(?:=|\s|>)/);
-      else expect(button).not.toMatch(/\sdisabled(?:=|\s|>)/);
+      expect(button).toMatch(/\sdisabled(?:=|\s|>)/);
     } finally {
       store.cancel();
       await pending;
@@ -112,7 +111,12 @@ describe('token statistics', () => {
 
   it('shows loading, unavailable and failed collection without fabricated totals', () => {
     for (const html of [render(null, true), render({ ...statistics, status: 'unavailable', message: '没有会话记录', periods: [] }), render(null, false, '读取失败')]) {
-      expect(html).not.toContain('statistics-totals');
+      expect(html).toContain('statistics-totals');
+      expect(html).toContain('role="radiogroup"');
+      expect(html).toContain('<span>Token 用量</span><strong>—</strong>');
+      expect(html).not.toContain('¥0.00');
+      expect(html).not.toContain('<strong>0</strong>');
+      expect(html).not.toContain('class="statistics-state"');
     }
     expect(render(null, false, '读取失败')).toContain('role="alert"');
     expect(render(null, true)).toContain('正在统计本机会话');
@@ -128,6 +132,26 @@ describe('token statistics', () => {
     expect(failed).toContain('role="alert"');
     expect(failed).toContain('当前显示上次统计结果');
     expect(failed).toContain('重新读取');
+    expect(failed.indexOf('role="alert"')).toBeLessThan(failed.indexOf('role="radiogroup"'));
+  });
+
+  it('keeps failures in the top notice and retains unknown metrics for an unsuccessful result', () => {
+    const html = render({ ...statistics, status: 'error', message: '连接失败' });
+    expect(html.match(/连接失败/g)).toHaveLength(1);
+    expect(html).toContain('statistics-totals');
+    expect(html).toContain('<span>Token 用量</span><strong>—</strong>');
+    expect(html).toContain('<dt>请求数</dt><dd>—');
+    expect(html).toContain('<dt>输入（含缓存）</dt><dd>—</dd>');
+    expect(html).not.toContain('1.5K');
+    expect(html).not.toContain('当前显示上次统计结果');
+    expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('role="radiogroup"'));
+  });
+
+  it('disables error retries while a refresh is running and keeps cached totals', () => {
+    const html = render(statistics, true, '连接失败');
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*aria-busy="true"/);
+    expect(html).toContain('读取中…');
+    expect(html).toContain('1.5K');
   });
 
   it('keeps the last empty result visible during a background refresh', () => {

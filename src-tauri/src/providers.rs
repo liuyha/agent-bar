@@ -39,6 +39,7 @@ pub fn pending_provider(id: ProviderId) -> ProviderUsage {
         message: Some("正在读取本机账号…".into()),
         windows: Vec::new(),
         updated_at: None,
+        cache_scope: None,
     }
 }
 
