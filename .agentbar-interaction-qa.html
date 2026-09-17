@@ -1,0 +1,21 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>AgentBar 独立交互验证（测试数据）</title><div id="root"></div><pre id="qa-calls" style="position:fixed;right:8px;bottom:8px;z-index:99;font-size:11px"></pre><script type="module">
+window.isTauri = true;
+const callbacks = new Map(), listeners = new Map(); let id = 0;
+const counts = {refresh:{codex:0,claude:0},statistics:{codex:0,claude:0},globalRefresh:0};
+const showCounts = () => document.getElementById('qa-calls').textContent = JSON.stringify(counts);
+const settings={refreshIntervalSeconds:300,enabledProviders:['codex','claude'],theme:'light'};
+let snapshot={revision:1,mode:'live',updatedAt:'2026-09-16T12:00:00Z',providers:['codex','claude'].map(id=>({id,name:id==='codex'?'Codex':'Claude',plan:'Pro',account:id+'@example.com',source:'local',status:'ready',message:null,updatedAt:'2026-09-16T12:00:00Z',windows:[{label:'每周用量',usedPercent:40,resetsAt:null}]}))};
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:(event,eventId)=>listeners.delete(eventId)};
+window.__TAURI_INTERNALS__={transformCallback:callback=>{callbacks.set(++id,callback);return id;},invoke:async(command,args={})=>{
+if(command==='plugin:event|listen'){const eventId=++id;listeners.set(eventId,args);return eventId;}
+if(command==='plugin:event|unlisten')return;
+if(command==='get_settings')return settings;
+if(command==='get_dashboard')return structuredClone(snapshot);
+if(command==='set_panel_expanded'){document.body.style.width=(args.expanded?700:360)+'px';return;}
+if(command==='get_token_statistics'){counts.statistics[args.provider]++;showCounts();return {status:'ready',message:null,updatedAt:'2026-09-16T12:00:00Z',periods:['day','week','month'].map((period,i)=>({period,startAt:'2026-09-16T00:00:00+08:00',endAt:'2026-09-16T20:00:00+08:00',inputTokens:1000*(i+1),cachedInputTokens:200,cacheWriteTokens:0,outputTokens:500*(i+1),totalTokens:1500*(i+1),requestCount:12*(i+1),conversationTurns:3*(i+1),estimatedCostUsd:.05*(i+1),unpricedTokens:0}))};}
+if(command==='refresh_provider_dashboard'){counts.refresh[args.provider]++;showCounts();await new Promise(resolve=>setTimeout(resolve,250));snapshot={...snapshot,revision:snapshot.revision+1,providers:snapshot.providers.map(provider=>provider.id===args.provider?{...provider,updatedAt:new Date().toISOString()}:provider)};for(const listener of listeners.values())if(listener.event==='usage-updated')callbacks.get(listener.handler)({payload:structuredClone(snapshot)});return structuredClone(snapshot);}
+if(command==='refresh_dashboard'){counts.globalRefresh++;showCounts();throw new Error('单卡不应发起全量刷新');}
+throw new Error('Unexpected command: '+command);
+}};
+showCounts(); await import('/src/main.tsx');
+</script></html>
