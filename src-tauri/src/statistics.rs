@@ -982,6 +982,18 @@ mod tests {
         }
     }
 
+    fn assert_reused_when_supported(
+        provider: ProviderId,
+        previous: *const Event,
+        current: *const Event,
+    ) {
+        // Codex conservatively rescans on platforms without stable file identity.
+        // All platforms still exercise the surrounding accounting assertions.
+        if provider != ProviderId::Codex || cfg!(unix) {
+            assert_eq!(previous, current);
+        }
+    }
+
     #[test]
     fn codex_full_scan_validates_reads_independently_of_cache_reuse() {
         let directory = tempdir().unwrap();
@@ -1405,7 +1417,11 @@ mod tests {
         assert_eq!(collect(&mut cache).periods[0].total_tokens, 110);
         let original_events = cache.files[&path].parsed.events.as_ptr();
         assert_eq!(collect(&mut cache).periods[0].total_tokens, 110);
-        assert_eq!(original_events, cache.files[&path].parsed.events.as_ptr());
+        assert_reused_when_supported(
+            ProviderId::Codex,
+            original_events,
+            cache.files[&path].parsed.events.as_ptr(),
+        );
         records.push(modern(
             "2026-09-16T09:02:00Z",
             "response-2",
@@ -1446,10 +1462,15 @@ mod tests {
         let result = collect("2027-01-01T00:00:01+08:00", &mut cache);
         assert_eq!(result.periods[3].total_tokens, 0);
         assert_eq!(result.periods[4].total_tokens, 220);
-        assert_eq!(old_events, cache.files[&old_path].parsed.events.as_ptr());
-        assert_eq!(
+        assert_reused_when_supported(
+            ProviderId::Codex,
+            old_events,
+            cache.files[&old_path].parsed.events.as_ptr(),
+        );
+        assert_reused_when_supported(
+            ProviderId::Codex,
             recent_events,
-            cache.files[&recent_path].parsed.events.as_ptr()
+            cache.files[&recent_path].parsed.events.as_ptr(),
         );
 
         // A rewrite can keep the same length; force a distinct mtime without a flaky sleep.
@@ -1467,9 +1488,10 @@ mod tests {
         let result = collect("2027-01-01T00:00:02+08:00", &mut cache);
         assert_eq!(result.periods[3].total_tokens, 0);
         assert_eq!(result.periods[4].total_tokens, 320);
-        assert_eq!(
+        assert_reused_when_supported(
+            ProviderId::Codex,
             recent_events,
-            cache.files[&recent_path].parsed.events.as_ptr()
+            cache.files[&recent_path].parsed.events.as_ptr(),
         );
 
         fs::remove_file(&old_path).unwrap();
@@ -1485,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn future_only_logs_become_eligible_without_reparsing_and_empty_all_starts_at_now() {
+    fn future_only_logs_become_eligible_and_empty_all_starts_at_now() {
         for provider in [ProviderId::Codex, ProviderId::Claude] {
             let directory = tempdir().unwrap();
             let path = directory.path().join("future.jsonl");
@@ -1511,7 +1533,11 @@ mod tests {
                 &calendar_windows(time("2026-09-17T00:00:00Z")).unwrap(),
                 &mut cache,
             );
-            assert_eq!(events, cache.files[&path].parsed.events.as_ptr());
+            assert_reused_when_supported(
+                provider,
+                events,
+                cache.files[&path].parsed.events.as_ptr(),
+            );
             assert_eq!(result.status, ProviderStatus::Ready);
             for period in &result.periods {
                 assert_eq!(period.total_tokens, 110);
