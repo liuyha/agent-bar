@@ -15,7 +15,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run",
+    "test": "vitest run && pnpm test:web",
+    "test:web": "node --test src-tauri/src/codex_web/read_usage.check.mjs",
     "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "tauri": "tauri",
@@ -25,10 +26,16 @@
     "rust:check": "node scripts/native.mjs check"
   },
   "dependencies": {
+    "@radix-ui/react-checkbox": "^1.3.11",
+    "@radix-ui/react-progress": "^1.1.16",
+    "@radix-ui/react-slot": "^1.3.3",
     "@tauri-apps/api": "^2.11.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^1.46.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "^2.6.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -37,10 +44,14 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
     "eslint": "^10.10.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.0.0",
+    "postcss": "^8.5.28",
+    "tailwindcss": "~3.4.19",
+    "tailwindcss-animate": "^1.0.7",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.70.0",
     "vite": "^8.3.0",

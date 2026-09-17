@@ -15,12 +15,27 @@ pub enum Theme {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexStatisticsSource {
+    #[default]
+    Local,
+    Auto,
+    Oauth,
+    Pat,
+    Cli,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppSettings {
     pub refresh_interval_seconds: u64,
     pub enabled_providers: Vec<ProviderId>,
     pub theme: Theme,
+    #[serde(default)]
+    pub codex_statistics_source: CodexStatisticsSource,
+    #[serde(default)]
+    pub codex_web_extras: bool,
 }
 
 impl Default for AppSettings {
@@ -29,6 +44,8 @@ impl Default for AppSettings {
             refresh_interval_seconds: 300,
             enabled_providers: vec![ProviderId::Codex, ProviderId::Claude],
             theme: Theme::System,
+            codex_statistics_source: CodexStatisticsSource::Local,
+            codex_web_extras: false,
         }
     }
 }
@@ -46,6 +63,12 @@ impl AppSettings {
             }
         }
         self.enabled_providers = unique;
+        // Older versions exposed authentication strategies as preferences. Every
+        // remote preference now uses automatic selection; retain the enum internally
+        // to describe the actual transport and decode existing settings.
+        if self.codex_statistics_source != CodexStatisticsSource::Local {
+            self.codex_statistics_source = CodexStatisticsSource::Auto;
+        }
         Ok(self)
     }
 }
@@ -132,7 +155,9 @@ mod tests {
             json!({
                 "refreshIntervalSeconds": 300,
                 "enabledProviders": ["codex", "claude"],
-                "theme": "system"
+                "theme": "system",
+                "codexStatisticsSource": "local",
+                "codexWebExtras": false
             })
         );
         assert!(serde_json::from_value::<AppSettings>(json!({
@@ -141,5 +166,37 @@ mod tests {
             "theme": "system"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn older_settings_keep_local_statistics_and_web_extras_opted_out() {
+        let old = json!({
+            "refreshIntervalSeconds": 300,
+            "enabledProviders": ["codex"],
+            "theme": "system"
+        });
+        let restored: AppSettings = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(
+            restored.codex_statistics_source,
+            CodexStatisticsSource::Local
+        );
+        assert!(!restored.codex_web_extras);
+        let mut selected = old;
+        selected["codexStatisticsSource"] = json!("pat");
+        selected["codexWebExtras"] = json!(true);
+        for legacy in ["auto", "oauth", "pat", "cli"] {
+            selected["codexStatisticsSource"] = json!(legacy);
+            let settings = serde_json::from_value::<AppSettings>(selected.clone())
+                .unwrap()
+                .validated()
+                .unwrap();
+            assert_eq!(
+                settings.codex_statistics_source,
+                CodexStatisticsSource::Auto
+            );
+            assert!(settings.codex_web_extras);
+        }
+        selected["codexStatisticsSource"] = json!("cookies");
+        assert!(serde_json::from_value::<AppSettings>(selected).is_err());
     }
 }

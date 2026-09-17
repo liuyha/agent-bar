@@ -22,6 +22,25 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('browser dashboard', () => {
+  it('does not install native account refresh listeners in browser previews', async () => {
+    const { subscribeToAccountStatisticsRefresh } = await import('./api');
+    const refresh = vi.fn();
+    const stop = await subscribeToAccountStatisticsRefresh(refresh);
+    stop();
+    expect(native.listen).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('does not fabricate remote statistics or open an authenticated webpage in browser preview', async () => {
+    const { getCachedCodexAccountStatistics, getCodexAccountStatistics, openCodexUsageWeb } = await import('./api');
+    expect(await getCachedCodexAccountStatistics('oauth')).toBeNull();
+    expect(await getCodexAccountStatistics('oauth')).toMatchObject({
+      source: 'oauth', status: 'unavailable', account: null, accountId: null,
+      summary: { lifetimeTokens: null, peakDailyTokens: null }, dailyUsage: null, updatedAt: null, web: null,
+    });
+    await expect(openCodexUsageWeb()).rejects.toThrow('桌面应用');
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
   it('shows unavailable providers without inventing account or usage data', async () => {
     const { getDashboard, refreshDashboard } = await import('./api');
     const initial = await getDashboard();
@@ -70,6 +89,46 @@ describe('browser dashboard', () => {
 
 describe('desktop dashboard', () => {
   const snapshot: DashboardSnapshot = { revision: 2, mode: 'live', providers: [], updatedAt: '2026-09-16T00:00:00Z' };
+
+  it('delivers explicit account statistics refreshes and releases the native listener', async () => {
+    native.desktop = true;
+    const unsubscribe = vi.fn();
+    native.listen.mockResolvedValue(unsubscribe);
+    const { subscribeToAccountStatisticsRefresh } = await import('./api');
+    const refresh = vi.fn();
+    const stop = await subscribeToAccountStatisticsRefresh(refresh);
+    expect(native.listen).toHaveBeenCalledWith('refresh-account-statistics', refresh);
+    native.listen.mock.calls[0][1]();
+    expect(refresh).toHaveBeenCalledOnce();
+    stop();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('reads only the selected account statistics cache and propagates cache failures', async () => {
+    native.desktop = true;
+    const cached = { source: 'oauth', status: 'ready' };
+    native.invoke.mockResolvedValueOnce(cached).mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('缓存损坏'));
+    const { getCachedCodexAccountStatistics } = await import('./api');
+    expect(await getCachedCodexAccountStatistics('oauth')).toEqual(cached);
+    expect(await getCachedCodexAccountStatistics('pat')).toBeNull();
+    await expect(getCachedCodexAccountStatistics('auto')).rejects.toThrow('缓存损坏');
+    expect(native.invoke.mock.calls).toEqual([
+      ['get_cached_codex_account_statistics', { source: 'oauth' }],
+      ['get_cached_codex_account_statistics', { source: 'pat' }],
+      ['get_cached_codex_account_statistics', { source: 'auto' }],
+    ]);
+  });
+
+  it('queries the selected server source and exposes webpage disabled errors', async () => {
+    native.desktop = true;
+    native.invoke.mockResolvedValueOnce({ source: 'pat', status: 'ready' }).mockRejectedValueOnce(new Error('网页补充尚未启用'));
+    const { getCodexAccountStatistics, openCodexUsageWeb } = await import('./api');
+    expect(await getCodexAccountStatistics('pat')).toEqual({ source: 'pat', status: 'ready' });
+    await expect(openCodexUsageWeb()).rejects.toThrow('尚未启用');
+    expect(native.invoke.mock.calls).toEqual([
+      ['get_codex_account_statistics', { source: 'pat' }], ['open_codex_usage_web'],
+    ]);
+  });
 
   it('delivers saved preferences to other windows and releases its listener', async () => {
     native.desktop = true;

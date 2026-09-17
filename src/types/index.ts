@@ -1,10 +1,14 @@
 export type ProviderId = 'codex' | 'claude';
 export type Theme = 'system' | 'light' | 'dark';
+export type CodexStatisticsSource = 'local' | 'auto' | 'oauth' | 'pat' | 'cli';
+export type CodexStatisticsPreference = 'local' | 'auto';
 
 export interface AppSettings {
   refreshIntervalSeconds: number;
   enabledProviders: ProviderId[];
   theme: Theme;
+  codexStatisticsSource: CodexStatisticsPreference;
+  codexWebExtras: boolean;
 }
 
 export interface UsageWindow {
@@ -52,4 +56,35 @@ export interface TokenStatistics {
   message: string | null;
   periods: TokenPeriod[];
   updatedAt: string;
+}
+
+export interface AccountUsageSnapshot {
+  source: CodexStatisticsSource;
+  status: 'ready' | 'unavailable' | 'error';
+  message: string | null;
+  account: string | null;
+  accountId: string | null;
+  summary: {
+    lifetimeTokens: number | null;
+    peakDailyTokens: number | null;
+    longestRunningTurnSec: number | null;
+    currentStreakDays: number | null;
+    longestStreakDays: number | null;
+  };
+  dailyUsage: { date: string; tokens: number }[] | null;
+  serviceUpdatedAt: string | null;
+  updatedAt: string | null;
+  web: WebUsageSnapshot | null;
+}
+
+export interface WebUsageSnapshot {
+  status: 'ready' | 'unavailable' | 'error';
+  message: string | null;
+  account: string | null;
+  creditsRemaining: number | null;
+  codeReviewRemainingPercent: number | null;
+  usageUnit: string | null;
+  usageBreakdown: { date: string; amounts: { service: string; amount: number }[] }[] | null;
+  creditEvents: { date: string; service: string; credits: number }[] | null;
+  updatedAt: string | null;
 }

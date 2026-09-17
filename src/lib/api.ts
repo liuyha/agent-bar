@@ -1,6 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { AppSettings, DashboardSnapshot, ProviderId, TokenStatistics } from '../types';
+import type { AccountUsageSnapshot, AppSettings, CodexStatisticsSource, DashboardSnapshot, ProviderId, TokenStatistics } from '../types';
 import { defaultSettings, SETTINGS_KEY, validateSettings } from './settings';
 
 export const isDesktop = isTauri();
@@ -78,6 +78,11 @@ export async function subscribeToUsageNavigation(callback: () => void): Promise<
   return listen('navigate-usage', callback);
 }
 
+export async function subscribeToAccountStatisticsRefresh(callback: () => void): Promise<() => void> {
+  if (!isDesktop) return () => {};
+  return listen('refresh-account-statistics', callback);
+}
+
 export async function hidePanel(): Promise<void> {
   if (isDesktop) await invoke('hide_panel');
 }
@@ -99,6 +104,26 @@ export async function getTokenStatistics(provider: ProviderId): Promise<TokenSta
 export async function getCachedTokenStatistics(provider: ProviderId): Promise<TokenStatistics | null> {
   if (isDesktop) return invoke<TokenStatistics | null>('get_cached_token_statistics', { provider });
   return null;
+}
+
+export async function getCodexAccountStatistics(source: Exclude<CodexStatisticsSource, 'local'>): Promise<AccountUsageSnapshot> {
+  if (isDesktop) return invoke<AccountUsageSnapshot>('get_codex_account_statistics', { source });
+  return {
+    source, status: 'unavailable', message: '服务端使用统计仅在桌面应用中可用。',
+    account: null, accountId: null,
+    summary: { lifetimeTokens: null, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null },
+    dailyUsage: null, serviceUpdatedAt: null, updatedAt: null, web: null,
+  };
+}
+
+export async function getCachedCodexAccountStatistics(source: Exclude<CodexStatisticsSource, 'local'>): Promise<AccountUsageSnapshot | null> {
+  if (isDesktop) return invoke<AccountUsageSnapshot | null>('get_cached_codex_account_statistics', { source });
+  return null;
+}
+
+export async function openCodexUsageWeb(): Promise<void> {
+  if (!isDesktop) throw new Error('请在桌面应用中连接 Codex 用量网页。');
+  await invoke('open_codex_usage_web');
 }
 
 // Keep rapid hover / keyboard navigation from applying native sizes out of order.

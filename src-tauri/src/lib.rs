@@ -1,3 +1,6 @@
+mod account_statistics;
+mod account_statistics_cache;
+mod codex_web;
 mod models;
 mod panel;
 mod providers;
@@ -8,13 +11,13 @@ mod tray_summary;
 
 use std::time::Duration;
 
-use models::{AppSettings, DashboardSnapshot, ProviderId};
+use models::{AppSettings, CodexStatisticsSource, DashboardSnapshot, ProviderId};
 use state::AppState;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State, WindowEvent,
+    AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent,
 };
 
 #[tauri::command]
@@ -48,19 +51,24 @@ fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 
 #[tauri::command]
 async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
+    let worker_app = app.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
         let saved = state.save_settings(settings)?;
-        if let Err(error) = app.emit("settings-updated", &saved) {
+        if let Err(error) = worker_app.emit("settings-updated", &saved) {
             eprintln!("发送设置更新事件失败：{error}");
         }
         if let Ok(snapshot) = state.snapshot() {
-            emit_snapshot(&app, &snapshot);
+            emit_snapshot(&worker_app, &snapshot);
         }
-        Ok(saved)
+        Ok::<_, String>(saved)
     })
     .await
-    .map_err(|_| "保存设置任务异常，请重试".to_string())?
+    .map_err(|_| "保存设置任务异常，请重试".to_string())??;
+    if !saved.codex_web_extras || !saved.enabled_providers.contains(&ProviderId::Codex) {
+        codex_web::close(&app);
+    }
+    Ok(saved)
 }
 
 async fn refresh_and_emit(app: AppHandle) -> Result<DashboardSnapshot, String> {
@@ -178,6 +186,141 @@ async fn get_token_statistics(
         .map_err(|_| "统计本机会话任务异常，请重试".to_string())?
 }
 
+fn validate_account_statistics_request(
+    settings: &AppSettings,
+    source: CodexStatisticsSource,
+) -> Result<(), String> {
+    if !settings.enabled_providers.contains(&ProviderId::Codex) {
+        return Err("Codex 已停用，请先启用后读取使用统计".into());
+    }
+    if source != CodexStatisticsSource::Auto || settings.codex_statistics_source != source {
+        return Err("统计来源已变更，请按当前来源重新读取".into());
+    }
+    Ok(())
+}
+
+fn require_local_settings_window(window: &WebviewWindow) -> Result<(), String> {
+    if matches!(window.label(), "main" | "settings") {
+        Ok(())
+    } else {
+        Err("该窗口不能访问本机账号统计".into())
+    }
+}
+
+#[tauri::command]
+async fn get_cached_codex_account_statistics(
+    app: AppHandle,
+    window: WebviewWindow,
+    source: CodexStatisticsSource,
+) -> Result<Option<account_statistics::AccountUsageSnapshot>, String> {
+    require_local_settings_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = app.state::<AppState>().settings()?;
+        validate_account_statistics_request(&settings, source)?;
+        let request_scope = providers::account_statistics_scope_key();
+        let cache_scope = providers::account_statistics_cache_scope_key()
+            .filter(|cache_scope| cache_scope == &request_scope);
+        let home = app
+            .path()
+            .home_dir()
+            .map_err(|_| "无法定位用户目录，请重启 AgentBar 后重试".to_string())?;
+        let mut snapshot = account_statistics_cache::read_cached(
+            &storage::data_dir(&home),
+            source,
+            cache_scope.as_deref(),
+            settings.codex_web_extras,
+        )?;
+        let current = app.state::<AppState>().settings()?;
+        validate_account_statistics_request(&current, source)?;
+        if request_scope != providers::account_statistics_scope_key() {
+            return Err("Codex 登录状态已变化，请重新读取当前账号统计".into());
+        }
+        if !current.codex_web_extras {
+            if let Some(snapshot) = &mut snapshot {
+                snapshot.web = None;
+            }
+        }
+        Ok(snapshot)
+    })
+    .await
+    .map_err(|_| "读取服务端统计缓存任务异常，请重试".to_string())?
+}
+
+#[tauri::command]
+async fn get_codex_account_statistics(
+    app: AppHandle,
+    window: WebviewWindow,
+    source: CodexStatisticsSource,
+) -> Result<account_statistics::AccountUsageSnapshot, String> {
+    require_local_settings_window(&window)?;
+    let requested = app.state::<AppState>().settings()?;
+    validate_account_statistics_request(&requested, source)?;
+    let ticket = account_statistics_cache::REQUESTS.begin()?;
+    let scope = providers::account_statistics_scope_key();
+    let cache_scope =
+        providers::account_statistics_cache_scope_key().filter(|cache_scope| cache_scope == &scope);
+    let mut snapshot =
+        tauri::async_runtime::spawn_blocking(move || providers::collect_account_statistics(source))
+            .await
+            .map_err(|_| "读取服务端使用统计任务异常，请重试".to_string())?;
+    let current = app.state::<AppState>().settings()?;
+    validate_account_statistics_request(&current, source)?;
+    if scope != providers::account_statistics_scope_key() {
+        return Err("Codex 登录状态已变化，请重新读取当前账号统计".into());
+    }
+    if requested.codex_web_extras && current.codex_web_extras {
+        snapshot.web = Some(
+            codex_web::read(
+                &app,
+                snapshot.account.as_deref(),
+                snapshot.account_id.as_deref(),
+            )
+            .await,
+        );
+    }
+    let current = app.state::<AppState>().settings()?;
+    validate_account_statistics_request(&current, source)?;
+    if scope != providers::account_statistics_scope_key() {
+        return Err("Codex 登录状态已变化，请重新读取当前账号统计".into());
+    }
+    if !current.codex_web_extras {
+        snapshot.web = None;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = app
+            .path()
+            .home_dir()
+            .map_err(|_| "无法定位用户目录，请重启 AgentBar 后重试".to_string())?;
+        account_statistics_cache::REQUESTS.finish(
+            ticket,
+            &storage::data_dir(&home),
+            source,
+            cache_scope.as_deref(),
+            snapshot,
+            || {
+                let current = app.state::<AppState>().settings()?;
+                validate_account_statistics_request(&current, source)?;
+                if scope != providers::account_statistics_scope_key() {
+                    return Err("Codex 登录状态已变化，请重新读取当前账号统计".into());
+                }
+                Ok(current.codex_web_extras)
+            },
+        )
+    })
+    .await
+    .map_err(|_| "保存服务端统计缓存任务异常，请重试".to_string())?
+}
+
+#[tauri::command]
+async fn open_codex_usage_web(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_local_settings_window(&window)?;
+    let settings = app.state::<AppState>().settings()?;
+    if !settings.codex_web_extras || !settings.enabled_providers.contains(&ProviderId::Codex) {
+        return Err("请先启用 Codex 网页补充数据".into());
+    }
+    codex_web::open(&app)
+}
+
 fn log_result(result: Result<(), tauri::Error>) {
     if let Err(error) = result {
         eprintln!("操作 AgentBar 窗口失败：{error}");
@@ -204,6 +347,9 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
                 log_result(show_settings(app));
             }
             "refresh" => {
+                if let Err(error) = app.emit("refresh-account-statistics", ()) {
+                    eprintln!("发送服务端统计刷新事件失败：{error}");
+                }
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = refresh_and_emit(app).await {
@@ -306,7 +452,41 @@ pub fn run() {
             set_panel_expanded,
             get_cached_token_statistics,
             get_token_statistics,
+            get_cached_codex_account_statistics,
+            get_codex_account_statistics,
+            open_codex_usage_web,
         ])
         .run(tauri::generate_context!())
         .expect("启动 AgentBar 失败");
+}
+
+#[cfg(test)]
+mod account_request_tests {
+    use super::*;
+
+    #[test]
+    fn remote_statistics_respect_saved_source_and_provider_opt_out() {
+        let mut settings = AppSettings::default();
+        assert!(
+            validate_account_statistics_request(&settings, CodexStatisticsSource::Local).is_err()
+        );
+        assert!(
+            validate_account_statistics_request(&settings, CodexStatisticsSource::Oauth).is_err()
+        );
+        settings.codex_statistics_source = CodexStatisticsSource::Auto;
+        assert!(
+            validate_account_statistics_request(&settings, CodexStatisticsSource::Auto).is_ok()
+        );
+        for explicit in [
+            CodexStatisticsSource::Oauth,
+            CodexStatisticsSource::Pat,
+            CodexStatisticsSource::Cli,
+        ] {
+            assert!(validate_account_statistics_request(&settings, explicit).is_err());
+        }
+        settings.enabled_providers.clear();
+        assert!(
+            validate_account_statistics_request(&settings, CodexStatisticsSource::Auto).is_err()
+        );
+    }
 }

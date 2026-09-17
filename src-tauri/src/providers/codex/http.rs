@@ -18,7 +18,8 @@ use super::{
 };
 
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
-const WHOAMI_URL: &str = "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami";
+pub(super) const WHOAMI_URL: &str =
+    "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami";
 
 pub(super) enum Credential<'a> {
     Pat(&'a str),
@@ -49,18 +50,22 @@ pub(super) fn fetch(
     credential: Credential<'_>,
     now: DateTime<Utc>,
 ) -> Result<ProviderUsage, FetchError> {
-    let client = Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .redirect(Policy::none())
-        .build()
-        .map_err(|_| FetchError::Network)?;
+    let client = client()?;
     fetch_with(credential, now, |url, token, account, pat| {
         get_json(&client, url, token, account, pat)
     })
 }
 
-fn get_json(
+pub(super) fn client() -> Result<Client, FetchError> {
+    Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(Policy::none())
+        .build()
+        .map_err(|_| FetchError::Network)
+}
+
+pub(super) fn get_json(
     client: &Client,
     url: &str,
     token: &str,

@@ -4,8 +4,13 @@
 //! Credential files are read-only; native Codex owns token refresh. Only mapped
 //! account metadata and quota fields leave this module, never raw HTTP errors.
 
+mod activity;
 mod auth;
 mod http;
+
+pub(crate) use activity::{
+    account_statistics_cache_scope_key, account_statistics_scope_key, collect_account_statistics,
+};
 
 use std::{
     env,

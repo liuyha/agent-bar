@@ -1,4 +1,6 @@
 import { AlertCircle, ChevronRight, Clock3, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { formatCountdown, formatTime } from '../lib/format';
 import type { ProviderUsage } from '../types';
 
@@ -31,12 +33,13 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
           {provider.plan && <span className="provider-plan" title={provider.plan}>{provider.plan}</span>}
         </div>
         <span className={`provider-status status-${provider.status}`}>{statusLabel}</span>
-        {onRefresh && <button type="button" className="icon-button provider-refresh" aria-label={`刷新 ${provider.name} 用量`} title={`刷新 ${provider.name} 用量`} disabled={refreshing || refreshDisabled} onClick={onRefresh}><RefreshCw size={13} className={refreshing ? 'spin' : undefined} /></button>}
+        {onRefresh && <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label={`刷新 ${provider.name} 用量`} title={`刷新 ${provider.name} 用量`} disabled={refreshing || refreshDisabled} onClick={onRefresh}><RefreshCw size={13} className={refreshing ? 'spin' : undefined} /></Button>}
       </div>
       {refreshError && <div className="provider-message provider-message-error" role="alert"><AlertCircle size={13} aria-hidden="true" /><span>{refreshError}</span></div>}
       {message && <div className={`provider-message${provider.status === 'error' ? ' provider-message-error' : ''}`} role={provider.status === 'error' ? 'alert' : 'status'}>{provider.status === 'error' && <AlertCircle size={13} aria-hidden="true" />}<span>{message}</span></div>}
       {windows.length > 0 && <div className="usage-windows">
         {windows.map((window) => {
+          const label = window.label.replace(/GPT-5\.3-Codex-Spark/gi, 'Codex-Spark');
           const usedPercent = Math.min(100, Math.max(0, window.usedPercent));
           const remainingPercent = 100 - usedPercent;
           const displayPercent = Math.round(remainingPercent);
@@ -44,25 +47,24 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
           return (
             <div className="usage-window" key={window.label}>
               <div className="usage-label-row">
-                <span className="usage-title"><span className="usage-label">{window.label}</span>{' '}<strong className="usage-number">{displayPercent}% 剩余</strong></span>
+                <span className="usage-title"><span className="usage-label">{label}</span>{' '}<strong className="usage-number">{displayPercent}% 剩余</strong></span>
                 <span className="usage-reset">{countdown === '等待刷新' || countdown === '时间未知' ? countdown : `${countdown}后重置`}</span>
               </div>
-              <div
-                className={`progress-track${usedPercent >= 80 ? ' progress-high' : ''}`}
-                role="progressbar"
-                aria-label={`${provider.name} ${window.label}剩余`}
+              <Progress
+                value={remainingPercent}
+                className={usedPercent >= 80 ? 'progress-high' : undefined}
+                indicatorClassName={usedPercent >= 80 ? 'bg-[var(--warning)]' : undefined}
+                aria-label={`${provider.name} ${label}剩余`}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={displayPercent}
-              >
-                <span style={{ width: `${remainingPercent}%` }} />
-              </div>
+              />
             </div>
           );
         })}
       </div>}
       {onRefresh && <div className="provider-update-status" aria-live="polite"><Clock3 size={11} aria-hidden="true" /><span>{refreshing ? `正在刷新 ${provider.name}…` : provider.updatedAt ? `更新于 ${formatTime(provider.updatedAt)}` : '尚未获取用量'}</span></div>}
-      {onShowStatistics && <button type="button" className="statistics-trigger" aria-expanded={active} aria-controls={active ? 'token-statistics' : undefined} onClick={onShowStatistics}><span>查看 Token、金额与交互统计</span><ChevronRight size={13} aria-hidden="true" /></button>}
+      {onShowStatistics && <Button type="button" variant="ghost" className={`mt-3 h-auto w-full justify-between rounded-none border-0 border-t border-[var(--line)] px-0 pb-0 pt-[9px] text-left text-[10px] font-normal hover:bg-transparent ${active ? 'text-[var(--text)]' : 'text-[var(--muted)]'}`} aria-expanded={active} aria-controls={active ? 'token-statistics' : undefined} onClick={onShowStatistics}><span>查看 Token、金额与交互统计</span><ChevronRight size={13} aria-hidden="true" /></Button>}
     </article>
   );
 }

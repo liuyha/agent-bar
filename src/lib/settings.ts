@@ -1,9 +1,14 @@
-import type { AppSettings, ProviderId } from '../types';
+import type { AppSettings, CodexStatisticsPreference, ProviderId } from '../types';
 
 export const SETTINGS_KEY = 'agentbar.settings.v1';
 
+export const codexStatisticsSources: { value: CodexStatisticsPreference; label: string }[] = [
+  { value: 'local', label: '本机记录' },
+  { value: 'auto', label: '服务端' },
+];
+
 export function defaultSettings(): AppSettings {
-  return { refreshIntervalSeconds: 300, enabledProviders: ['codex', 'claude'], theme: 'system' };
+  return { refreshIntervalSeconds: 300, enabledProviders: ['codex', 'claude'], theme: 'system', codexStatisticsSource: 'local', codexWebExtras: false };
 }
 
 export function validateSettings(value: unknown): AppSettings {
@@ -19,9 +24,16 @@ export function validateSettings(value: unknown): AppSettings {
   if (data.theme !== 'system' && data.theme !== 'light' && data.theme !== 'dark') {
     throw new Error('不支持的外观设置');
   }
+  const savedSource = data.codexStatisticsSource === undefined ? 'local' : data.codexStatisticsSource;
+  const codexStatisticsSource = ['oauth', 'pat', 'cli'].includes(savedSource as string) ? 'auto' : savedSource;
+  const codexWebExtras = data.codexWebExtras === undefined ? false : data.codexWebExtras;
+  if (!codexStatisticsSources.some(({ value }) => value === codexStatisticsSource)) throw new Error('不支持的 Codex 统计来源');
+  if (typeof codexWebExtras !== 'boolean') throw new Error('网页补充设置必须为开关');
   return {
     refreshIntervalSeconds: data.refreshIntervalSeconds as number,
     enabledProviders: [...new Set(data.enabledProviders)] as ProviderId[],
     theme: data.theme,
+    codexStatisticsSource: codexStatisticsSource as CodexStatisticsPreference,
+    codexWebExtras,
   };
 }

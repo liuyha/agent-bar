@@ -2,6 +2,10 @@
 mod claude;
 mod codex;
 
+pub(crate) use codex::{
+    account_statistics_cache_scope_key, account_statistics_scope_key, collect_account_statistics,
+};
+
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::models::{

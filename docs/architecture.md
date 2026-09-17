@@ -21,6 +21,9 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `src-tauri/src/statistics/pricing.rs` | 精确模型价格映射、缓存和长上下文计价 |
 | `src/components/TokenStatisticsPanel.tsx` | 悬停详情与统计加载、缺失、错误状态 |
 | `src/lib/tokenStatistics.ts` | 按服务保留最新统计、读取已保存汇总、合并并发请求并后台更新 |
+| `src-tauri/src/account_statistics.rs`、`providers/codex/activity.rs` | 账号服务端活动契约、OAuth / PAT / CLI 来源与字段归一化 |
+| `src-tauri/src/codex_web.rs`、`codex_web/` | 用户主动连接的独立网页会话、账号核对及可选网页指标 |
+| `src/components/AccountStatisticsContent.tsx`、`src/lib/accountStatistics.ts` | 服务端统计视图、请求版本和来源隔离 |
 
 ## 数据契约
 
@@ -31,7 +34,7 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 - 每个窗口包含 `label`、`usedPercent` 和可空的 `resetsAt`。只显示服务实际返回的窗口；窗口数量和周期不固定。
 - `DashboardSnapshot` 包含 `providers`、采集尝试的 `updatedAt`、`mode: "live"` 和递增的 `revision`。重启恢复已保存的版本后继续递增；单个服务失败不阻断其他服务。
 
-`AppSettings` 保持 `enabledProviders`、`refreshIntervalSeconds`、`theme`：默认两项服务、300 秒、跟随系统；支持 60/300/900 秒刷新和 system/light/dark 主题。
+`AppSettings` 包含 `enabledProviders`、`refreshIntervalSeconds`、`theme`：默认两项服务、300 秒、跟随系统；支持 60/300/900 秒刷新和 system/light/dark 主题。新增 `codexStatisticsSource: local | auto | oauth | pat | cli`（默认 local）及 `codexWebExtras`（默认 false）。旧设置缺少新字段时按默认值恢复，网页连接始终由用户主动发起。
 
 | Command | 作用 |
 | --- | --- |
@@ -45,6 +48,9 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `set_panel_expanded` | 在屏幕工作区内展开 / 恢复统计窗口宽度 |
 | `get_token_statistics` | 在后台线程同步指定服务源日志、聚合统计，写入汇总 JSON 后读回返回 |
 | `get_cached_token_statistics` | 只读指定服务已保存的汇总 JSON；缺失时返回 null，不扫描日志 |
+| `get_codex_account_statistics` | 自动选择服务端认证和查询方式，按已保存开关附加网页数据；返回前复核来源、账号及设置 |
+| `get_cached_codex_account_statistics` | 仅读取当前登录及配置范围匹配的服务端成功缓存，不发起采集；缺失或失效返回 null |
+| `open_codex_usage_web` | 开关启用后，打开独立的 ChatGPT 用量网页登录窗口 |
 
 `usage-updated` 广播快照；`settings-updated` 广播保存后的设置，使主面板同步主题与服务过滤；`navigate-usage` 重置主面板导航。偏好设置由托盘右键菜单打开独立的 `settings` 窗口（`index.html#settings`），关闭时隐藏并保留草稿，不随主面板失焦收起。前端拒绝较低 `revision`，防止命令返回与后台事件乱序覆盖。
 
@@ -75,6 +81,14 @@ Codex 原生历史读取 `sessions` 和 `archived_sessions`，同时解析 pi / 
 没有前端内存缓存时，先通过只读命令加载 `{codex,claude}-token-statistics.json`，无需等待日志扫描。每次展开或刷新仍在后台同步源日志变化并按当前本地日历聚合，随后将结果保存至统计 JSON 并读回更新前端缓存；这期间保留已有结果和真实统计时间。已有汇总不会阻止采集新增数据或重新计算日期范围。
 
 会话只在 Rust 中解析，不把对话正文或原始日志发送到前端。模型金额采用核验的公开标准单价，无价格的模型保留 Token 统计；`estimatedCostUsd` 汇总可计价部分，并通过 `unpricedTokens` 提示不完整，全部无法计价时为 null。费率来源与边界记录在 [计价依据](token-pricing.md)。本地数据可能跨账号，不能与当前账号额度比例混为一谈。
+
+## 账号服务端统计
+
+`AccountUsageSnapshot` 与本地 `TokenStatistics` 分离，包含实际来源、账号元信息、可空活动汇总、可空每日记录、服务端日期和采集时间。界面只展示“本机记录”和“服务端”，服务端内部自动选择 PAT / OAuth / 受控 CLI 路径，不展示实际认证方式。旧版显式来源设置迁移为 `auto`。OAuth / PAT 直接请求 `wham/profiles/me`；CLI 使用 `account/usage/read`。前端 `accountStatisticsPeriods.ts` 按本地日历选择服务端日期，今日／本周／本月／本年仅汇总匹配的每日记录；全部只读服务端累计与峰值汇总，缺失不回退为有限日记录总和。两类来源共用 `StatisticsPeriodSwitch`，时段切换不触发额外请求；账号活动概览与网页补充不随时段变化。网页补充采用独立的临时登录会话，仅允许已确认的同账号数据。详细字段和单位边界见 [账号服务端统计](account-statistics.md)。
+
+`account_statistics_cache.rs` 保存带版本、来源和登录范围摘要的成功快照，复用原子写与私有权限；请求顺序校验防止迟到结果覆盖新请求。只读缓存命令不调用采集器，查询及保存前后复核当前范围和设置。前端服务端 store 由 App 主窗口持有，初始化先仅读缓存、缺失再获取；收起面板不取消自动刷新。独立周期触发 `refreshing`（保留内容、按钮旋转），按钮与托盘手动事件触发 `loading`（面板加载）；在途请求合并，手动可升级自动请求的反馈。设置窗口不建立后台轮询，账号/来源/网页设置变化会取消旧生命周期并重新核验缓存。
+
+服务端结果不写入本机汇总 JSON，不复用仅按 ProviderId 区分的本机缓存。前端每次请求递增版本，来源／账号／网页开关改变后取消旧结果；认证失败清除旧远端值。Rust 在采集前后复核已保存设置以及当前 `CODEX_HOME` 的认证／配置指纹，防止异步请求返回另一账号的数据。网页本身无 Tauri 原生权限，新增命令也限制为 main/settings 窗口。
 
 ## 菜单栏摘要
 

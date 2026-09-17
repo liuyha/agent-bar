@@ -1,6 +1,6 @@
 # AgentBar
 
-使用 **Tauri 2 + React 19 + TypeScript + Vite + Rust** 构建的 AI 工具用量托盘应用。读取本机已登录的 Codex、Claude Code 账号，在菜单栏查看真实用量。
+使用 **Tauri 2 + React 19 + TypeScript + Vite + shadcn/ui + Tailwind CSS + Rust** 构建的 AI 工具用量托盘应用。读取本机已登录的 Codex、Claude Code 账号，在菜单栏查看真实用量。
 
 没有演示模式。Codex 参照 CodexBar 的自动采集路径，读取本机 PAT / OAuth 查询账号额度，并在适用时回退到官方 CLI app-server；Claude 使用 Claude Code 本地 OAuth 登录态查询官方订阅用量。未登录或无法读取时显示对应状态，不填充示例数据。采集逻辑使用 Rust 实现，未分发 CodexBar 的 Swift 源码或 CLI。macOS 是首个开发与验证平台；Windows、Linux 保留 Tauri 工程骨架，兼容性仍需在对应系统验证。
 
@@ -26,6 +26,12 @@
 - Windows 需要 Microsoft C++ Build Tools 和 WebView2；Linux 需要 WebKitGTK 等系统库。具体依赖以 [Tauri 官方环境准备](https://v2.tauri.app/start/prerequisites/)为准。
 
 仅运行浏览器预览时不需要 Rust 和桌面系统依赖。
+
+## 界面组件
+
+`src/components/ui/` 保存按 AgentBar 紧凑尺寸调整的 shadcn/ui 源码（Button、Checkbox、NativeSelect、Progress），`components.json` 配置组件路径，`@/` 指向 `src/`。组件来源为 [shadcn/ui 官方仓库](https://github.com/shadcn-ui/ui)，许可证保留在 [licenses/shadcn-ui-MIT.txt](licenses/shadcn-ui-MIT.txt)。设置、刷新操作、剩余额度和统计时段已使用这些组件或 Tailwind 工具类。窗口布局及复杂统计排版继续由现有 CSS 管理。
+
+采用 **Tailwind CSS 3.4** 与 PostCSS，配合 `tailwind-merge` 2.x；保留现有样式重置，关闭 Preflight。主题颜色映射到已有 CSS 变量，因此浅色、深色和跟随系统共用同一套组件。现有构建目标包含 Safari 15 / macOS 12；[Tailwind CSS 4 需要 Safari 16.4 及以上](https://tailwindcss.com/docs/compatibility)，升级前需同步评估 WebView 兼容范围。统计来源使用原生下拉框，避免浮层脱离悬停区域后触发详情收起。
 
 ## 运行
 
@@ -63,6 +69,8 @@ Tauri 会启动 Vite 并编译 Rust。首次运行需要下载 Rust 依赖，耗
 
 ## 本地历史统计
 
+Codex 使用统计提供 **本机记录／服务端** 两个来源，均可切换今日／本周／本月／本年／全部。程序自动选择服务端认证和查询方式；网页补充默认关闭。服务端按已返回每日记录汇总所选时段，“全部”采用服务端累计值，缺失日期不补零。网页补充独立展示 Credits、使用分布及代码审查额度。配置和数据边界见 [账号服务端使用统计](docs/account-statistics.md)。
+
 统计读取 Codex 的 `sessions`、`archived_sessions` 和 Claude Code 的 `projects` 会话记录，尊重 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`。Codex 还汇总 pi / OMP 会话中的 `openai-codex` 用量。无需账号额度接口成功也能查看本地历史，普通浏览器无法读取这些记录。
 
 - 今日从本地时间零点开始；本周从周一零点开始；本月从一号零点开始；本年从 1 月 1 日零点开始；全部覆盖本机保留的所有历史记录。均统计至读取时刻，跨年日期显示年份。
@@ -80,8 +88,11 @@ Tauri 会启动 Vite 并编译 Rust。首次运行需要下载 Rust 依赖，耗
 - `dashboard.json`：账号用量展示快照，包含账号元信息、套餐、额度和更新时间。启动时按当前启用服务恢复；刷新写入并读回成功后才更新界面，存储失败保留原快照。
 - `codex-token-history.sqlite3`、`claude-token-history.sqlite3`：标准化历史统计缓存。
 - `codex-token-statistics.json`、`claude-token-statistics.json`：本次聚合结果，写入后读回供程序使用。
+- `codex-account-statistics.json`：服务端成功统计缓存，按当前登录及配置范围核验后恢复；失败不覆盖成功数据。
 
-使用统计再次展开时立即显示该服务上次缓存的结果，并在后台更新；只有没有缓存的首次加载显示“正在统计本机会话”。程序重新启动后先读取已保存的统计汇总，后台更新失败时保留已有结果并提示重试。
+本机统计再次展开时立即显示该服务上次缓存的结果，并在后台更新；只有没有缓存的首次加载显示“正在统计本机会话”。程序重新启动后先读取已保存的统计汇总，后台更新失败时保留已有结果并提示重试。
+
+服务端统计启动先读缓存，有缓存不立即请求，无缓存才静默获取。主窗口按设置周期后台刷新，收起详情仍继续；自动刷新仅按钮旋转，手动刷新才显示面板 loading。刷新失败时保留仍匹配当前账号的成功缓存及原始采集时间。
 
 数据不包含账号凭据、接口原始响应或对话正文。macOS / Unix 目录权限为 `0700`，JSON 和 SQLite 文件为 `0600`。旧应用缓存保留，新目录首次使用时从源日志重建。设置仍保存在 Tauri 应用配置目录的 `settings.json`，浏览器预览仍使用独立的 `localStorage`。
 

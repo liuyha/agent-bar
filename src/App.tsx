@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, Check, Clock3, Layers3, LoaderCircle, Monitor, Moon, RefreshCw, Sun, X } from 'lucide-react';
 import { ProviderCard } from './components/ProviderCard';
 import { TokenStatisticsPanel } from './components/TokenStatisticsPanel';
-import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, refreshDashboard, refreshProviderDashboard, saveSettings, setPanelExpanded, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { NativeSelect } from '@/components/ui/native-select';
+import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, refreshDashboard, refreshProviderDashboard, saveSettings, setPanelExpanded, subscribeToAccountStatisticsRefresh, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
 import { mergeDashboardSnapshot } from './lib/snapshot';
-import type { AppSettings, DashboardSnapshot, ProviderId, Theme } from './types';
+import { codexStatisticsSources } from './lib/settings';
+import { createAccountStatisticsStore } from './lib/accountStatistics';
+import type { AppSettings, CodexStatisticsPreference, DashboardSnapshot, ProviderId, Theme } from './types';
 
 const providers: { id: ProviderId; name: string; detail: string }[] = [
   { id: 'codex', name: 'Codex', detail: 'OpenAI' },
@@ -23,6 +28,7 @@ function errorMessage(error: unknown): string {
 
 function sameSettings(a: AppSettings, b: AppSettings): boolean {
   return a.refreshIntervalSeconds === b.refreshIntervalSeconds && a.theme === b.theme &&
+    a.codexStatisticsSource === b.codexStatisticsSource && a.codexWebExtras === b.codexWebExtras &&
     a.enabledProviders.length === b.enabledProviders.length &&
     a.enabledProviders.every((provider) => b.enabledProviders.includes(provider));
 }
@@ -48,6 +54,10 @@ export default function App() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [statisticsProvider, setStatisticsProvider] = useState<ProviderId | null>(null);
+  const [accountStatisticsStore] = useState(createAccountStatisticsStore);
+  const serverStatisticsEnabled = !isSettingsWindow && settings?.codexStatisticsSource === 'auto' && settings.enabledProviders.includes('codex');
+  const serverRefreshInterval = settings?.refreshIntervalSeconds;
+  const codexAccount = snapshot?.providers.find((provider) => provider.id === 'codex')?.account;
   const alive = useRef(false);
   const requestVersion = useRef(0);
   const refreshLock = useRef(false);
@@ -121,6 +131,35 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = settings?.theme ?? 'system';
   }, [settings?.theme]);
+
+  // The main window remains mounted in the tray, so hiding the statistics view
+  // does not stop remote refreshes or discard a completed result.
+  useLayoutEffect(() => {
+    if (!serverStatisticsEnabled) return;
+    void accountStatisticsStore.initialize('auto');
+    return accountStatisticsStore.cancel;
+  }, [accountStatisticsStore, serverStatisticsEnabled, codexAccount, settings?.codexWebExtras]);
+
+  useEffect(() => {
+    if (!serverStatisticsEnabled || !serverRefreshInterval) return;
+    const interval = window.setInterval(() => { void accountStatisticsStore.refresh('auto'); }, serverRefreshInterval * 1_000);
+    return () => window.clearInterval(interval);
+  }, [accountStatisticsStore, serverStatisticsEnabled, serverRefreshInterval]);
+
+  useEffect(() => {
+    if (!serverStatisticsEnabled) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    void subscribeToAccountStatisticsRefresh(() => {
+      if (!cancelled) void accountStatisticsStore.refresh('auto', 'manual');
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unsubscribe = stop;
+    }).catch((error: unknown) => {
+      if (!cancelled) setDashboardError(`统计刷新入口连接失败：${errorMessage(error)}`);
+    });
+    return () => { cancelled = true; unsubscribe?.(); };
+  }, [accountStatisticsStore, serverStatisticsEnabled]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -208,6 +247,7 @@ export default function App() {
     const version = requestVersion.current;
     setRefreshingProviders((current) => ({ ...current, [provider]: true }));
     setProviderErrors((current) => ({ ...current, [provider]: null }));
+    if (provider === 'codex' && serverStatisticsEnabled) void accountStatisticsStore.refresh('auto', 'manual');
     try {
       const nextSnapshot = await refreshProviderDashboard(provider);
       if (alive.current) {
@@ -224,7 +264,7 @@ export default function App() {
         setStatisticsRefreshes((current) => ({ ...current, [provider]: (current[provider] ?? 0) + 1 }));
       }
     }
-  }, [acceptSnapshot]);
+  }, [acceptSnapshot, accountStatisticsStore, serverStatisticsEnabled]);
 
   useEffect(() => {
     if (isDesktop || !settings || loading || bootError) return;
@@ -278,6 +318,22 @@ export default function App() {
     }
   }
 
+  async function saveStatisticsPreferences(patch: Pick<AppSettings, 'codexStatisticsSource' | 'codexWebExtras'>) {
+    if (!settings || saveLock.current) throw new Error('设置正在保存，请稍后重试。');
+    saveLock.current = true;
+    setSaving(true);
+    try {
+      const latest = await getSettings();
+      const nextSettings = await saveSettings({ ...latest, ...patch });
+      if (!alive.current) return;
+      setSettings(nextSettings);
+      setDraft({ ...nextSettings, enabledProviders: [...nextSettings.enabledProviders] });
+    } finally {
+      saveLock.current = false;
+      if (alive.current) setSaving(false);
+    }
+  }
+
   const isDirty = settings && draft ? !sameSettings(settings, draft) : false;
   const visibleProviders = snapshot?.providers.filter((provider) => !settings || settings.enabledProviders.includes(provider.id)) ?? [];
   const selectedProvider = !isSettingsWindow ? visibleProviders.find((provider) => provider.id === statisticsProvider) : undefined;
@@ -302,7 +358,7 @@ export default function App() {
         </div>
         <div className="header-actions">
           <span className="local-badge"><span />偏好设置</span>
-          {isDesktop && <button type="button" className="icon-button close-button" aria-label="关闭偏好设置" title="关闭偏好设置（Esc）" onClick={() => { void closePanel(); }}><X size={15} /></button>}
+          {isDesktop && <Button type="button" variant="ghost" size="icon" aria-label="关闭偏好设置" title="关闭偏好设置（Esc）" onClick={() => { void closePanel(); }}><X size={15} /></Button>}
         </div>
       </header>}
 
@@ -310,7 +366,7 @@ export default function App() {
         {loading ? (
           <div className="state-panel" role="status"><LoaderCircle className="spin" size={25} /><h1>正在加载</h1><p>{isDesktop ? '读取本地设置与账号用量…' : '读取本地设置…'}</p></div>
         ) : bootError ? (
-          <div className="state-panel"><AlertCircle size={28} /><h1>暂时无法加载</h1><p role="alert">{bootError}</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RefreshCw size={15} />重新加载</button></div>
+          <div className="state-panel"><AlertCircle size={28} /><h1>暂时无法加载</h1><p role="alert">{bootError}</p><Button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RefreshCw size={15} />重新加载</Button></div>
         ) : !isSettingsWindow ? (
           <div ref={usageLayout} className={`usage-layout${statisticsExpanded ? ' has-statistics' : ''}`} onMouseEnter={cancelStatisticsLeave} onMouseLeave={scheduleStatisticsLeave} onFocus={cancelStatisticsLeave} onBlur={scheduleStatisticsLeave}>
             <div className="usage-overview">
@@ -321,7 +377,7 @@ export default function App() {
               <div className="state-panel empty-state"><Layers3 size={29} /><h2>还没有显示的服务</h2><p>右键点击菜单栏图标，进入「偏好设置」，<br />启用 Codex 或 Claude 查看账号用量。</p></div>
             )}
             </div>
-            {selectedProvider && <TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} onClose={() => setStatisticsProvider(null)} />}
+            {selectedProvider && settings && <TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} account={selectedProvider.account} settings={settings} saving={saving} onPreferencesChange={saveStatisticsPreferences} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} accountStatisticsStore={accountStatisticsStore} onClose={() => setStatisticsProvider(null)} />}
           </div>
         ) : draft ? (
           <div className="settings-page">
@@ -329,21 +385,27 @@ export default function App() {
             <form onSubmit={(event) => { event.preventDefault(); void handleSave(); }}>
               <fieldset className="settings-group" disabled={saving}>
                 <legend>显示的服务</legend>
-                <div className="provider-options">
-                  {providers.map((provider) => <label className={`provider-option${draft.enabledProviders.includes(provider.id) ? ' selected' : ''}`} key={provider.id}><input type="checkbox" checked={draft.enabledProviders.includes(provider.id)} onChange={() => toggleProvider(provider.id)} /><span className="custom-checkbox" aria-hidden="true">{draft.enabledProviders.includes(provider.id) && <Check size={11} strokeWidth={3} />}</span><span className="option-name">{provider.name}<small>{provider.detail}</small></span></label>)}
+                <div className="grid grid-cols-2 gap-[9px]">
+                  {providers.map((provider) => <label className={`provider-option${draft.enabledProviders.includes(provider.id) ? ' selected' : ''}`} htmlFor={`provider-${provider.id}`} key={provider.id}><Checkbox id={`provider-${provider.id}`} checked={draft.enabledProviders.includes(provider.id)} disabled={saving} onCheckedChange={() => toggleProvider(provider.id)} /><span className="option-name">{provider.name}<small>{provider.detail}</small></span></label>)}
                 </div>
               </fieldset>
               <fieldset className="settings-group" disabled={saving}>
                 <legend>自动刷新</legend>
-                <div className="setting-row"><label htmlFor="refresh-interval"><Clock3 size={15} />刷新间隔</label><select id="refresh-interval" value={draft.refreshIntervalSeconds} onChange={(event) => updateDraft({ refreshIntervalSeconds: Number(event.target.value) })}><option value={60}>1 分钟</option><option value={300}>5 分钟</option><option value={900}>15 分钟</option></select></div>
+                <div className="setting-row"><label htmlFor="refresh-interval"><Clock3 size={15} />刷新间隔</label><NativeSelect id="refresh-interval" value={draft.refreshIntervalSeconds} onChange={(event) => updateDraft({ refreshIntervalSeconds: Number(event.target.value) })}><option value={60}>1 分钟</option><option value={300}>5 分钟</option><option value={900}>15 分钟</option></NativeSelect></div>
+              </fieldset>
+              <fieldset className="settings-group" disabled={saving}>
+                <legend>Codex 使用统计</legend>
+                <div className="setting-row"><label htmlFor="codex-statistics-source">统计来源</label><NativeSelect id="codex-statistics-source" value={draft.codexStatisticsSource} onChange={(event) => updateDraft({ codexStatisticsSource: event.target.value as CodexStatisticsPreference })}>{codexStatisticsSources.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</NativeSelect></div>
+                <label className="mx-px mt-[11px] flex cursor-pointer items-center gap-1.5 text-[11px] text-secondary-foreground" htmlFor="codex-web-extras"><Checkbox id="codex-web-extras" checked={draft.codexWebExtras} disabled={saving} onCheckedChange={(checked) => updateDraft({ codexWebExtras: checked === true })} /><span>启用可选网页补充</span></label>
+                <p className="statistics-footnote">本机记录提供日、周、月、年及全部统计。服务端查询账号汇总和每日 Token，由程序自动选择可用的连接方式。网页补充可单独查看 Credits 和网页用量，需连接用量网页。</p>
               </fieldset>
               <fieldset className="settings-group" disabled={saving}>
                 <legend>外观</legend>
-                <div className="theme-options">{themes.map(({ value, name, icon: Icon }) => <label className={`theme-option${draft.theme === value ? ' selected' : ''}`} key={value}><input type="radio" name="theme" value={value} checked={draft.theme === value} onChange={() => updateDraft({ theme: value })} /><Icon size={17} strokeWidth={1.7} /><span>{name}</span>{draft.theme === value && <span className="theme-selected" aria-hidden="true" />}</label>)}</div>
+                <div className="grid grid-cols-3 gap-2">{themes.map(({ value, name, icon: Icon }) => <label className={`theme-option${draft.theme === value ? ' selected' : ''}`} key={value}><input className="sr-only" type="radio" name="theme" value={value} checked={draft.theme === value} onChange={() => updateDraft({ theme: value })} /><Icon size={17} strokeWidth={1.7} /><span>{name}</span>{draft.theme === value && <span className="theme-selected" aria-hidden="true" />}</label>)}</div>
               </fieldset>
               {settingsError && <ErrorNotice>{settingsError}</ErrorNotice>}
               <div className="save-feedback" aria-live="polite">{saved ? <><Check size={14} />设置已保存并应用</> : isDirty ? <span className="pending-feedback">有未保存的修改</span> : <span className="muted-feedback">设置仅保存在当前设备</span>}</div>
-              <button className="primary-button save-button" type="submit" disabled={saving || !isDirty}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? '正在保存…' : '保存设置'}</button>
+              <Button className="w-full" type="submit" disabled={saving || !isDirty}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? '正在保存…' : '保存设置'}</Button>
             </form>
           </div>
         ) : null}
