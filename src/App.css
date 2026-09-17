@@ -253,14 +253,15 @@ fieldset:disabled label { cursor: default; opacity: .65; }
 .statistics-state { display: flex; align-items: center; flex-direction: column; justify-content: center; min-height: 210px; text-align: center; color: var(--secondary); }
 .statistics-state p { font-size: 11px; line-height: 1.8; max-width: 100%; overflow-wrap: anywhere; }
 .statistics-state small { color: var(--muted); font-size: 10px; }
-.app-desktop.statistics-expanded { max-width: none; }
-.app-desktop .usage-layout.has-statistics { grid-template-columns: minmax(0, 1fr) 324px; column-gap: 16px; }
 .app-desktop .token-statistics { margin-top: 0; padding: 12px; }
 @media (max-width: 620px) {
-  .usage-layout.has-statistics, .app-desktop .usage-layout.has-statistics { grid-template-columns: minmax(0, 1fr); }
+  .usage-layout.has-statistics { grid-template-columns: minmax(0, 1fr); }
   .token-statistics { margin-top: 4px; }
 }
 
 .app-desktop.settings-window { padding: 22px; }
+.app-desktop.statistics-window { display: block; padding: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.app-desktop.statistics-window > .token-statistics { min-height: 100dvh; margin: 0; padding: 14px; border: 0; border-radius: 0; background: var(--app-bg); }
+.app-desktop.statistics-window > .statistics-notice { margin: 0; padding: 12px 14px 0; }
 
 @tailwind utilities;

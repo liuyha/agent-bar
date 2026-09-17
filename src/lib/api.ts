@@ -83,6 +83,11 @@ export async function subscribeToAccountStatisticsRefresh(callback: () => void):
   return listen('refresh-account-statistics', callback);
 }
 
+export async function subscribeToTokenStatisticsRefresh(callback: (provider: ProviderId) => void): Promise<() => void> {
+  if (!isDesktop) return () => {};
+  return listen<ProviderId>('refresh-token-statistics', ({ payload }) => callback(payload));
+}
+
 export async function hidePanel(): Promise<void> {
   if (isDesktop) await invoke('hide_panel');
 }
@@ -124,12 +129,4 @@ export async function getCachedCodexAccountStatistics(source: Exclude<CodexStati
 export async function openCodexUsageWeb(): Promise<void> {
   if (!isDesktop) throw new Error('请在桌面应用中连接 Codex 用量网页。');
   await invoke('open_codex_usage_web');
-}
-
-// Keep rapid hover / keyboard navigation from applying native sizes out of order.
-let panelResize = Promise.resolve();
-export function setPanelExpanded(expanded: boolean): Promise<void> {
-  if (!isDesktop) return Promise.resolve();
-  panelResize = panelResize.catch(() => {}).then(() => invoke<void>('set_panel_expanded', { expanded }));
-  return panelResize;
 }

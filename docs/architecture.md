@@ -15,11 +15,14 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `src-tauri/src/storage.rs` | 用户数据目录、私有文件权限与 JSON 原子读写 |
 | `src-tauri/src/lib.rs` | Tauri 命令、后台任务、托盘事件 |
 | `src-tauri/src/tray_summary.rs` | 菜单栏剩余占比、重置倒计时与来源提示 |
-| `src-tauri/src/panel.rs` | 面板定位、失焦收起、托盘点击切换 |
+| `src-tauri/src/panel.rs` | 主面板与附属统计窗口定位、级联交互、焦点组与显示版本 |
 | `src-tauri/src/statistics.rs` | 读取本地会话、去重、按本地日期统计 Token / 请求 / 轮次 |
 | `src-tauri/src/statistics/codex_history.rs`、`statistics/cache.rs` | Codex / pi / OMP 日志增量解析、继承记录处理，以及 Codex / Claude SQLite 缓存 |
 | `src-tauri/src/statistics/pricing.rs` | 精确模型价格映射、缓存和长上下文计价 |
 | `src/components/TokenStatisticsPanel.tsx` | 悬停详情与统计加载、缺失、错误状态 |
+| `src/components/StatisticsWindow.tsx` | 独立统计窗口入口、账号/设置/选中服务同步与渲染确认 |
+| `src/lib/panel.ts` | 串行提交面板操作、订阅状态与携带版本确认显示 |
+| `src/lib/useAccountStatistics.ts` | 服务端统计 store 的初始化、定时刷新、手动事件与账号生命周期 |
 | `src/lib/tokenStatistics.ts` | 按服务保留最新统计、读取已保存汇总、合并并发请求并后台更新 |
 | `src-tauri/src/account_statistics.rs`、`providers/codex/activity.rs` | 账号服务端活动契约、OAuth / PAT / CLI 来源与字段归一化 |
 | `src-tauri/src/codex_web.rs`、`codex_web/` | 用户主动连接的独立网页会话、账号核对及可选网页指标 |
@@ -43,9 +46,14 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `refresh_provider_dashboard` | 仅刷新指定服务，保留其他服务后持久化并广播 |
 | `get_settings` | 读取本机设置 |
 | `save_settings` | 持久化设置并立即应用服务过滤，通知后台重新采集 |
-| `hide_panel` | 收起面板，后台继续运行 |
+| `hide_panel` | 收起主面板和统计窗口，后台继续运行 |
 | `hide_settings` | 隐藏独立偏好设置窗口，不影响主面板 |
-| `set_panel_expanded` | 在屏幕工作区内展开 / 恢复统计窗口宽度 |
+| `show_statistics_panel` | 主窗口按 provider、卡片完整可见矩形和聚焦意图请求展开独立统计窗口 |
+| `hide_statistics_panel` | 收起统计窗口，可将焦点交回主窗口 |
+| `dismiss_panel` | 按层级关闭：先统计窗口，再主面板 |
+| `set_panel_interaction` | 汇报调用窗口的悬停与键盘交互状态，协调跨窗口延迟收起 |
+| `get_statistics_panel_state` | 读取选中 provider、左右方向与递增 revision |
+| `present_statistics_panel` | 统计窗口完成渲染后回传 revision，原生校验仍有效才显示 |
 | `get_token_statistics` | 在后台线程同步指定服务源日志、聚合统计，写入汇总 JSON 后读回返回 |
 | `get_cached_token_statistics` | 只读指定服务已保存的汇总 JSON；缺失时返回 null，不扫描日志 |
 | `get_codex_account_statistics` | 自动选择服务端认证和查询方式，按已保存开关附加网页数据；返回前复核来源、账号及设置 |
@@ -53,6 +61,8 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `open_codex_usage_web` | 开关启用后，打开独立的 ChatGPT 用量网页登录窗口 |
 
 `usage-updated` 广播快照；`settings-updated` 广播保存后的设置，使主面板同步主题与服务过滤；`navigate-usage` 重置主面板导航。偏好设置由托盘右键菜单打开独立的 `settings` 窗口（`index.html#settings`），关闭时隐藏并保留草稿，不随主面板失焦收起。前端拒绝较低 `revision`，防止命令返回与后台事件乱序覆盖。
+
+`statistics-panel-changed` 向主面板和统计窗口发送 `{ provider, side, revision }`。统计窗口先订阅再读当前状态，完成对应版本渲染后调用 `present_statistics_panel`；Rust 仅接受仍选中服务、主面板仍可见且 revision 一致的确认，避免快速切换或关闭后的迟到渲染重新弹窗。`refresh-token-statistics` 携带 provider，使卡片手动刷新即使返回同样的不可用额度状态，也能触发本机统计更新；`refresh-account-statistics` 将账号统计手动刷新交给唯一的服务端 store。
 
 ## 采集与并发
 
@@ -72,7 +82,7 @@ Claude 使用 Claude Code 的本机 OAuth 登录来源；只有凭据读取和�
 
 ## 本地历史统计
 
-历史统计独立于账号额度快照。悬停、键盘聚焦或点击服务卡片加载相应服务；服务展示数据变化或卡片手动刷新后重新统计。前端按服务保留最新结果，关闭详情不会丢弃缓存或进行中的请求，再次展开立即显示上次结果并后台更新。同一服务的并发刷新共用请求，两个服务的缓存与订阅互相隔离。只有没有缓存的首次加载展示全屏统计提示；更新失败保留旧结果并提示重试。原生展开 / 收起命令在前端串行处理。卡片与右侧详情共享悬停区域，延迟判断移出，避免扩展窗口时的临时鼠标离开造成反复开合。
+历史统计独立于账号额度快照。悬停服务卡片或用鼠标／键盘激活统计入口加载相应服务；服务展示数据变化或卡片手动刷新后重新统计。桌面详情在常驻的独立统计窗口中展示，前端按服务保留最新结果，关闭详情不会丢弃缓存或进行中的请求，再次展开立即显示上次结果并后台更新。同一服务的并发刷新共用请求，两个服务的缓存与订阅互相隔离。只有没有缓存的首次加载展示全屏统计提示；更新失败保留旧结果并提示重试。原生展开、收起和交互操作在各窗口前端串行提交，跨窗口状态由 Rust 协调；浏览器预览继续采用页内详情。
 
 `TokenStatistics` 包含 `status`、可空 `message`、`updatedAt` 与 `periods`。每个周期包含 `period: day | week | month | year | all`、`startAt` / `endAt`、`inputTokens`（包含缓存）、`cachedInputTokens`、`cacheWriteTokens`、`outputTokens`、`totalTokens`、可空 `estimatedCostUsd`、`unpricedTokens`、可空 `requestCount` / `conversationTurns`。按本机日历零点分界，本周从周一开始，本年从当年 1 月 1 日开始；全部涵盖本机保留的所有记录，截至读取时刻，起点取最早有效记录时间，没有记录时使用结束时间。全部统计不按月裁剪解析结果。缺失或不能可靠重建的计数保持 null，与零区分。
 
@@ -86,9 +96,9 @@ Codex 原生历史读取 `sessions` 和 `archived_sessions`，同时解析 pi / 
 
 `AccountUsageSnapshot` 与本地 `TokenStatistics` 分离，包含实际来源、账号元信息、可空活动汇总、可空每日记录、服务端日期和采集时间。界面只展示“本机记录”和“服务端”，服务端内部自动选择 PAT / OAuth / 受控 CLI 路径，不展示实际认证方式。旧版显式来源设置迁移为 `auto`。OAuth / PAT 直接请求 `wham/profiles/me`；CLI 使用 `account/usage/read`。前端 `accountStatisticsPeriods.ts` 按本地日历选择服务端日期，今日／本周／本月／本年仅汇总匹配的每日记录；全部只读服务端累计与峰值汇总，缺失不回退为有限日记录总和。两类来源共用 `StatisticsPeriodSwitch`，时段切换不触发额外请求；账号活动概览与网页补充不随时段变化。网页补充采用独立的临时登录会话，仅允许已确认的同账号数据。详细字段和单位边界见 [账号服务端统计](account-statistics.md)。
 
-`account_statistics_cache.rs` 保存带版本、来源和登录范围摘要的成功快照，复用原子写与私有权限；请求顺序校验防止迟到结果覆盖新请求。只读缓存命令不调用采集器，查询及保存前后复核当前范围和设置。前端服务端 store 由 App 主窗口持有，初始化先仅读缓存、缺失再获取；收起面板不取消自动刷新。独立周期触发 `refreshing`（保留内容、按钮旋转），按钮与托盘手动事件触发 `loading`（面板加载）；在途请求合并，手动可升级自动请求的反馈。设置窗口不建立后台轮询，账号/来源/网页设置变化会取消旧生命周期并重新核验缓存。
+`account_statistics_cache.rs` 保存带版本、来源和登录范围摘要的成功快照，复用原子写与私有权限；请求顺序校验防止迟到结果覆盖新请求。只读缓存命令不调用采集器，查询及保存前后复核当前范围和设置。桌面服务端 store 与定时器由常驻的 `StatisticsWindow` 通过 `useAccountStatistics` 唯一持有，主窗口和设置窗口不重复请求。初始化先仅读缓存、缺失再获取；隐藏统计窗口不卸载刷新生命周期。独立周期触发 `refreshing`（保留内容、按钮旋转），按钮与托盘手动事件触发 `loading`（面板加载）；在途请求合并，手动可升级自动请求的反馈。账号/来源/网页设置变化会取消旧生命周期并重新核验缓存。
 
-服务端结果不写入本机汇总 JSON，不复用仅按 ProviderId 区分的本机缓存。前端每次请求递增版本，来源／账号／网页开关改变后取消旧结果；认证失败清除旧远端值。Rust 在采集前后复核已保存设置以及当前 `CODEX_HOME` 的认证／配置指纹，防止异步请求返回另一账号的数据。网页本身无 Tauri 原生权限，新增命令也限制为 main/settings 窗口。
+服务端结果不写入本机汇总 JSON，不复用仅按 ProviderId 区分的本机缓存。前端每次请求递增版本，来源／账号／网页开关改变后取消旧结果；认证失败清除旧远端值。Rust 在采集前后复核已保存设置以及当前 `CODEX_HOME` 的认证／配置指纹，防止异步请求返回另一账号的数据。网页本身无 Tauri 原生权限；账号统计和网页连接命令仅允许可信的 `main`、`settings`、`statistics` 窗口。面板控制限于 `main` / `statistics`，展开请求仅来自 `main`，渲染确认仅来自 `statistics`。
 
 ## 菜单栏摘要
 
@@ -98,7 +108,11 @@ macOS 托盘标题格式为 `<剩余占比> <距离重置时长>`，例如 `60% 
 
 ## 桌面与存储
 
-主面板默认隐藏，左键托盘图标展开 360×600 逻辑像素面板；再次点击、失焦、Esc、收起按钮可隐藏。后台刷新独立于 WebView。macOS 使用 NSStatusItem 屏幕坐标定位；Linux 通过托盘菜单打开。Windows、Linux 的原生行为仍需独立验收。
+主面板默认隐藏，左键托盘图标展开 360×600 逻辑像素面板，统计展开不改变主面板尺寸。启动时预创建隐藏的附属 `statistics` 窗口（`index.html#statistics`），关闭时隐藏并复用；macOS 以原生父子窗口关联。统计窗口优先贴主面板右侧，右侧放不下时改为左侧，纵向按服务卡片锚点定位并限制在屏幕工作区内。两侧都不足时，剩余空间达到 280 逻辑像素便缩窄详情；否则在工作区内覆盖展示，避免窗口超出屏幕。
+
+当前服务卡片与可见统计窗口共同构成鼠标交互区域，主面板其余区域不保留详情。原生层在统计窗口展开期间读取真实屏幕鼠标位置，连续位于交互区域外约 250 ms 才收起；关闭前再次核对坐标和当前选择版本，不以 WebView 的 `:hover` 或 enter／leave 到达顺序决定关闭。卡片与明细纵向重叠范围内的窄水平间隙也作为过渡区，允许慢速跨窗移动；卡片下方空白不在范围内。前端在滚动和卡片尺寸改变时同步完整可见矩形。纯键盘导航可以保留面板，实际鼠标移动后恢复位置判断，旧 DOM 焦点不能阻止收起。自动收起已聚焦的明细时还焦主面板；点击外部仍按两窗焦点关闭整组。悬停打开不抢焦点；点击统计入口或按展开方向键将焦点交给统计窗口，反方向键可返回主面板。Esc 先关闭详情，再关闭主面板；再次点击托盘直接隐藏整组。
+
+账号额度的 Rust 后台采集独立于 WebView；服务端活动统计由常驻统计 WebView 管理。macOS 14 及以上禁用统计 WebView 后台节流，使隐藏期间仍可处理刷新和渲染确认；其他平台及系统版本的隐藏执行时机受 WebView 能力影响。macOS 使用 NSStatusItem 屏幕坐标定位；Linux 通过托盘菜单打开。Windows、Linux 的原生行为仍需独立验收。
 
 统计数据统一保存在用户主目录的 `.agent-bar/`。`dashboard.json` 保存用于展示的账号元信息、套餐、额度和更新时间；两个服务各自的 SQLite 保存归一历史，统计 JSON 保存聚合结果。这里不保存账号凭据、额度接口原始响应或对话正文。macOS / Unix 目录权限为 `0700`，JSON 和 SQLite 文件权限为 `0600`。旧 Tauri 应用缓存保持原样，首次使用新目录时从源日志重建统计缓存。
 

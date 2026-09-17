@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "The dashboard and preferences window may subscribe to usage, settings and navigation events.",
-  "windows": ["main", "settings"],
+  "description": "The dashboard, attached statistics and preferences windows may subscribe to usage, settings and navigation events.",
+  "windows": ["main", "settings", "statistics"],
   "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

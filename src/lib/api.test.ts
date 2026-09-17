@@ -180,16 +180,13 @@ describe('desktop dashboard', () => {
     await expect(refreshProviderDashboard('codex')).rejects.toThrow('当前服务刷新失败');
   });
 
-  it('requests statistics for the selected provider and serializes panel resizes', async () => {
+  it('requests statistics for the selected provider', async () => {
     native.desktop = true;
     native.invoke.mockResolvedValue({ status: 'ready', periods: [] });
-    const { getTokenStatistics, setPanelExpanded } = await import('./api');
+    const { getTokenStatistics } = await import('./api');
     expect(await getTokenStatistics('claude')).toEqual({ status: 'ready', periods: [] });
-    await Promise.all([setPanelExpanded(true), setPanelExpanded(false)]);
     expect(native.invoke.mock.calls).toEqual([
       ['get_token_statistics', { provider: 'claude' }],
-      ['set_panel_expanded', { expanded: true }],
-      ['set_panel_expanded', { expanded: false }],
     ]);
   });
 

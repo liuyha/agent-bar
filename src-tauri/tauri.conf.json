@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "acceptFirstMouse": true,
         "title": "AgentBar",
         "width": 360,
         "height": 600,

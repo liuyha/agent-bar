@@ -35,8 +35,15 @@ async fn refresh_provider_dashboard(
     app: AppHandle,
     provider: ProviderId,
 ) -> Result<DashboardSnapshot, String> {
+    if provider == ProviderId::Codex {
+        let _ = app.emit("refresh-account-statistics", ());
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        let snapshot = app.state::<AppState>().refresh_provider(provider)?;
+        let result = app.state::<AppState>().refresh_provider(provider);
+        // A manual refresh also reloads local history when account collection
+        // fails or returns the same unavailable state.
+        let _ = app.emit("refresh-token-statistics", provider);
+        let snapshot = result?;
         emit_snapshot(&app, &snapshot);
         Ok(snapshot)
     })
@@ -152,8 +159,91 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[tauri::command]
-fn set_panel_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
-    panel::set_expanded(&app, expanded).map_err(|error| error.to_string())
+fn show_statistics_panel(
+    app: AppHandle,
+    window: WebviewWindow,
+    provider: ProviderId,
+    anchor: panel::AnchorRect,
+    focus: bool,
+    update_only: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("只能从主面板展开统计".into());
+    }
+    if !anchor.valid() {
+        return Err("统计面板位置无效".into());
+    }
+    if !app
+        .state::<AppState>()
+        .settings()?
+        .enabled_providers
+        .contains(&provider)
+    {
+        return Err("当前服务未启用".into());
+    }
+    panel::show_statistics(&app, provider, anchor, focus, update_only)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn hide_statistics_panel(
+    app: AppHandle,
+    window: WebviewWindow,
+    focus_main: bool,
+) -> Result<(), String> {
+    require_panel_window(&window)?;
+    panel::hide_statistics(&app, focus_main).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn dismiss_panel(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_panel_window(&window)?;
+    panel::dismiss(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_panel_interaction(
+    app: AppHandle,
+    window: WebviewWindow,
+    hovered: bool,
+    keyboard: bool,
+    intent: String,
+) -> Result<(), String> {
+    require_panel_window(&window)?;
+    if !matches!(intent.as_str(), "pointer" | "leave" | "keyboard" | "focus") {
+        return Err("面板交互来源无效".into());
+    }
+    panel::interaction_changed(&app, window.label(), hovered, keyboard, &intent)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_statistics_panel_state(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<panel::StatisticsPanelState, String> {
+    require_panel_window(&window)?;
+    Ok(panel::statistics_state(&app))
+}
+
+#[tauri::command]
+fn present_statistics_panel(
+    app: AppHandle,
+    window: WebviewWindow,
+    revision: u64,
+) -> Result<(), String> {
+    if window.label() != "statistics" {
+        return Err("只能从统计窗口确认显示".into());
+    }
+    panel::present_statistics(&app, revision).map_err(|error| error.to_string())
+}
+
+fn require_panel_window(window: &WebviewWindow) -> Result<(), String> {
+    if matches!(window.label(), "main" | "statistics") {
+        Ok(())
+    } else {
+        Err("该窗口不能控制统计面板".into())
+    }
 }
 
 #[tauri::command]
@@ -200,7 +290,7 @@ fn validate_account_statistics_request(
 }
 
 fn require_local_settings_window(window: &WebviewWindow) -> Result<(), String> {
-    if matches!(window.label(), "main" | "settings") {
+    if matches!(window.label(), "main" | "settings" | "statistics") {
         Ok(())
     } else {
         Err("该窗口不能访问本机账号统计".into())
@@ -416,6 +506,7 @@ pub fn run() {
             create_tray(app)?;
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            panel::initialize(app.handle())?;
             start_refresh_loop(app.handle().clone());
             start_tray_clock(app.handle().clone());
             Ok(())
@@ -427,12 +518,16 @@ pub fn run() {
                     log_result(window.hide());
                 }
             }
-            if window.label() == "main" {
+            if matches!(window.label(), "main" | "statistics") {
                 match event {
                     WindowEvent::CloseRequested { api, .. } => {
                         // Retain the WebView and Rust background worker in the tray.
                         api.prevent_close();
-                        log_result(panel::hide(window.app_handle()));
+                        if window.label() == "statistics" {
+                            log_result(panel::hide_statistics(window.app_handle(), true));
+                        } else {
+                            log_result(panel::hide(window.app_handle()));
+                        }
                     }
                     WindowEvent::Focused(focused) => {
                         panel::focus_changed(window.app_handle(), *focused)
@@ -449,7 +544,12 @@ pub fn run() {
             save_settings,
             hide_panel,
             hide_settings,
-            set_panel_expanded,
+            show_statistics_panel,
+            hide_statistics_panel,
+            dismiss_panel,
+            set_panel_interaction,
+            get_statistics_panel_state,
+            present_statistics_panel,
             get_cached_token_statistics,
             get_token_statistics,
             get_cached_codex_account_statistics,

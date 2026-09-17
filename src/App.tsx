@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, Check, Clock3, Layers3, LoaderCircle, Monitor, Moon, RefreshCw, Sun, X } from 'lucide-react';
 import { ProviderCard } from './components/ProviderCard';
 import { TokenStatisticsPanel } from './components/TokenStatisticsPanel';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { NativeSelect } from '@/components/ui/native-select';
-import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, refreshDashboard, refreshProviderDashboard, saveSettings, setPanelExpanded, subscribeToAccountStatisticsRefresh, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
+import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, refreshDashboard, refreshProviderDashboard, saveSettings, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
 import { mergeDashboardSnapshot } from './lib/snapshot';
 import { codexStatisticsSources } from './lib/settings';
-import { createAccountStatisticsStore } from './lib/accountStatistics';
+import { useAccountStatistics } from './lib/useAccountStatistics';
+import { dismissPanel, getStatisticsPanelState, hideStatisticsPanel, setPanelInteraction, showStatisticsPanel, updateStatisticsPanelAnchor, subscribeToStatisticsPanel, type StatisticsPanelState } from './lib/panel';
 import type { AppSettings, CodexStatisticsPreference, DashboardSnapshot, ProviderId, Theme } from './types';
 
 const providers: { id: ProviderId; name: string; detail: string }[] = [
@@ -54,10 +55,10 @@ export default function App() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [statisticsProvider, setStatisticsProvider] = useState<ProviderId | null>(null);
-  const [accountStatisticsStore] = useState(createAccountStatisticsStore);
-  const serverStatisticsEnabled = !isSettingsWindow && settings?.codexStatisticsSource === 'auto' && settings.enabledProviders.includes('codex');
-  const serverRefreshInterval = settings?.refreshIntervalSeconds;
+  const [statisticsSide, setStatisticsSide] = useState<StatisticsPanelState['side']>(null);
+  const serverStatisticsEnabled = !isDesktop && !isSettingsWindow && !loading;
   const codexAccount = snapshot?.providers.find((provider) => provider.id === 'codex')?.account;
+  const accountStatisticsStore = useAccountStatistics(settings, codexAccount, serverStatisticsEnabled);
   const alive = useRef(false);
   const requestVersion = useRef(0);
   const refreshLock = useRef(false);
@@ -65,23 +66,94 @@ export default function App() {
   const saveLock = useRef(false);
   const mainContent = useRef<HTMLElement>(null);
   const usageLayout = useRef<HTMLDivElement>(null);
+  const statisticsAnchor = useRef<{ provider: ProviderId; element: HTMLElement } | null>(null);
+  const lastInteraction = useRef('');
   const statisticsLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resizingPanel = useRef(false);
 
   function cancelStatisticsLeave() {
     if (statisticsLeaveTimer.current !== null) clearTimeout(statisticsLeaveTimer.current);
     statisticsLeaveTimer.current = null;
   }
 
-  function scheduleStatisticsLeave() {
+  function scheduleStatisticsLeave(pointer = false) {
+    if (isDesktop) return;
     cancelStatisticsLeave();
     statisticsLeaveTimer.current = setTimeout(() => {
-      if (resizingPanel.current) { scheduleStatisticsLeave(); return; }
-      const layout = usageLayout.current;
-      const keyboardFocusInside = layout?.contains(document.activeElement) && document.activeElement?.matches(':focus-visible');
-      if (!layout?.matches(':hover') && !keyboardFocusInside) setStatisticsProvider(null);
+      const card = statisticsAnchor.current?.element;
+      const detail = usageLayout.current?.querySelector('#token-statistics');
+      const keyboardFocusInside = !pointer && (card?.contains(document.activeElement) || detail?.contains(document.activeElement)) && document.activeElement?.matches(':focus-visible');
+      if (!card?.matches(':hover') && !detail?.matches(':hover') && !keyboardFocusInside) setStatisticsProvider(null);
     }, 180);
   }
+
+  function reportInteraction(intent: 'pointer' | 'leave' | 'keyboard' | 'focus' = 'focus', deduplicate = false) {
+    if (!isDesktop || isSettingsWindow) return;
+    const element = statisticsAnchor.current?.element;
+    const keyboard = Boolean(document.hasFocus() && element?.contains(document.activeElement) && document.activeElement?.matches(':focus-visible'));
+    const hovered = intent !== 'leave' && Boolean(element?.matches(':hover'));
+    const key = `${hovered}:${keyboard}:${intent}`;
+    if (deduplicate && lastInteraction.current === key) return;
+    lastInteraction.current = key;
+    void setPanelInteraction(hovered, keyboard, intent)
+      .catch((error: unknown) => { if (alive.current) setDashboardError(`面板交互同步失败：${errorMessage(error)}`); });
+  }
+
+  function openStatistics(provider: ProviderId, anchor: HTMLElement, focus = false) {
+    cancelStatisticsLeave();
+    statisticsAnchor.current = { provider, element: anchor };
+    if (!isDesktop) { setStatisticsProvider(provider); return; }
+    const bounds = measureStatisticsCard(anchor);
+    if (!bounds) return;
+    void showStatisticsPanel(provider, bounds, focus)
+      .catch((error: unknown) => { if (alive.current) setDashboardError(`展开使用统计失败：${errorMessage(error)}`); });
+    reportInteraction(focus ? 'focus' : 'pointer');
+  }
+
+  function measureStatisticsCard(anchor: HTMLElement) {
+    const rect = anchor.getBoundingClientRect();
+    const viewport = mainContent.current?.getBoundingClientRect();
+    if (!viewport) return null;
+    const x = Math.max(rect.left, viewport.left);
+    const y = Math.max(rect.top, viewport.top);
+    const width = Math.min(rect.right, viewport.right) - x;
+    const height = Math.min(rect.bottom, viewport.bottom) - y;
+    return width > 0 && height > 0 ? { x, y, width, height } : null;
+  }
+
+  function leaveStatisticsCard(insideWindow: boolean) {
+    reportInteraction(insideWindow ? 'pointer' : 'leave');
+    scheduleStatisticsLeave(true);
+  }
+
+  function repositionStatistics() {
+    const selection = statisticsAnchor.current;
+    if (!isDesktop || !statisticsProvider || !selection) return;
+    const anchor = selection.element;
+    const bounds = measureStatisticsCard(anchor);
+    if (!bounds) {
+      void hideStatisticsPanel().catch((error: unknown) => setDashboardError(errorMessage(error)));
+    } else {
+      void updateStatisticsPanelAnchor(selection.provider, bounds)
+        .catch((error: unknown) => { if (alive.current) setDashboardError(errorMessage(error)); });
+    }
+  }
+
+  useEffect(() => {
+    const selection = statisticsAnchor.current;
+    if (!isDesktop || !statisticsProvider || !selection || selection.provider !== statisticsProvider) return;
+    const { element: anchor, provider } = selection;
+    // Usage rows can change height during background refreshes. Keep the native
+    // pointer hit region aligned with the visible card without reopening it.
+    const observer = new ResizeObserver(() => {
+      if (statisticsAnchor.current?.element !== anchor || statisticsAnchor.current.provider !== provider) return;
+      const bounds = measureStatisticsCard(anchor);
+      const update = bounds ? updateStatisticsPanelAnchor(provider, bounds) : hideStatisticsPanel();
+      void update.catch((error: unknown) => { if (alive.current) setDashboardError(errorMessage(error)); });
+    });
+    observer.observe(anchor);
+    if (mainContent.current) observer.observe(mainContent.current);
+    return () => observer.disconnect();
+  }, [statisticsProvider]);
 
   const acceptSnapshot = useCallback((incoming: DashboardSnapshot) => {
     setSnapshot((current) => mergeDashboardSnapshot(current, incoming));
@@ -132,34 +204,24 @@ export default function App() {
     document.documentElement.dataset.theme = settings?.theme ?? 'system';
   }, [settings?.theme]);
 
-  // The main window remains mounted in the tray, so hiding the statistics view
-  // does not stop remote refreshes or discard a completed result.
-  useLayoutEffect(() => {
-    if (!serverStatisticsEnabled) return;
-    void accountStatisticsStore.initialize('auto');
-    return accountStatisticsStore.cancel;
-  }, [accountStatisticsStore, serverStatisticsEnabled, codexAccount, settings?.codexWebExtras]);
-
   useEffect(() => {
-    if (!serverStatisticsEnabled || !serverRefreshInterval) return;
-    const interval = window.setInterval(() => { void accountStatisticsStore.refresh('auto'); }, serverRefreshInterval * 1_000);
-    return () => window.clearInterval(interval);
-  }, [accountStatisticsStore, serverStatisticsEnabled, serverRefreshInterval]);
-
-  useEffect(() => {
-    if (!serverStatisticsEnabled) return;
+    if (!isDesktop || isSettingsWindow) return;
     let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    void subscribeToAccountStatisticsRefresh(() => {
-      if (!cancelled) void accountStatisticsStore.refresh('auto', 'manual');
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unsubscribe = stop;
-    }).catch((error: unknown) => {
-      if (!cancelled) setDashboardError(`统计刷新入口连接失败：${errorMessage(error)}`);
-    });
-    return () => { cancelled = true; unsubscribe?.(); };
-  }, [accountStatisticsStore, serverStatisticsEnabled]);
+    let revision = -1;
+    let stop: (() => void) | undefined;
+    const accept = (state: StatisticsPanelState) => {
+      if (cancelled || state.revision < revision) return;
+      revision = state.revision;
+      setStatisticsProvider(state.provider);
+      setStatisticsSide(state.side);
+    };
+    void subscribeToStatisticsPanel(accept).then(async (unsubscribe) => {
+      if (cancelled) { unsubscribe(); return; }
+      stop = unsubscribe;
+      accept(await getStatisticsPanelState());
+    }).catch((error: unknown) => { if (!cancelled) setDashboardError(`统计窗口连接失败：${errorMessage(error)}`); });
+    return () => { cancelled = true; stop?.(); };
+  }, [isSettingsWindow]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -171,11 +233,12 @@ export default function App() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
       event.preventDefault();
-      void closePanel();
+      if (isSettingsWindow) void closePanel();
+      else void dismissPanel().catch((error: unknown) => { if (alive.current) setDashboardError(errorMessage(error)); });
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [closePanel]);
+  }, [closePanel, isSettingsWindow]);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,7 +310,7 @@ export default function App() {
     const version = requestVersion.current;
     setRefreshingProviders((current) => ({ ...current, [provider]: true }));
     setProviderErrors((current) => ({ ...current, [provider]: null }));
-    if (provider === 'codex' && serverStatisticsEnabled) void accountStatisticsStore.refresh('auto', 'manual');
+    if (provider === 'codex' && serverStatisticsEnabled && settings?.codexStatisticsSource === 'auto') void accountStatisticsStore.refresh('auto', 'manual');
     try {
       const nextSnapshot = await refreshProviderDashboard(provider);
       if (alive.current) {
@@ -264,7 +327,7 @@ export default function App() {
         setStatisticsRefreshes((current) => ({ ...current, [provider]: (current[provider] ?? 0) + 1 }));
       }
     }
-  }, [acceptSnapshot, accountStatisticsStore, serverStatisticsEnabled]);
+  }, [acceptSnapshot, accountStatisticsStore, serverStatisticsEnabled, settings?.codexStatisticsSource]);
 
   useEffect(() => {
     if (isDesktop || !settings || loading || bootError) return;
@@ -337,20 +400,10 @@ export default function App() {
   const isDirty = settings && draft ? !sameSettings(settings, draft) : false;
   const visibleProviders = snapshot?.providers.filter((provider) => !settings || settings.enabledProviders.includes(provider.id)) ?? [];
   const selectedProvider = !isSettingsWindow ? visibleProviders.find((provider) => provider.id === statisticsProvider) : undefined;
-  const statisticsExpanded = Boolean(selectedProvider);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (isSettingsWindow) return;
-    resizingPanel.current = true;
-    void setPanelExpanded(statisticsExpanded).catch((error: unknown) => {
-      if (alive.current) setDashboardError(`调整统计面板失败：${errorMessage(error)}`);
-    }).finally(() => { if (!cancelled) resizingPanel.current = false; });
-    return () => { cancelled = true; };
-  }, [statisticsExpanded, isSettingsWindow]);
+  const statisticsExpanded = !isDesktop && Boolean(selectedProvider);
 
   return (
-    <div className={`app-shell${isDesktop ? ' app-desktop' : ''}${statisticsExpanded ? ' statistics-expanded' : ''}${isSettingsWindow ? ' settings-window' : ''}`}>
+    <div onWheelCapture={() => reportInteraction('pointer', true)} onMouseMove={() => reportInteraction('pointer', true)} onMouseDownCapture={() => reportInteraction('pointer')} onMouseEnter={() => reportInteraction('pointer')} onMouseLeave={() => reportInteraction('leave')} onKeyDown={() => { queueMicrotask(() => reportInteraction('keyboard')); }} onFocus={() => reportInteraction()} onBlur={() => { queueMicrotask(() => reportInteraction()); }} className={`app-shell${isDesktop ? ' app-desktop' : ''}${statisticsExpanded ? ' statistics-expanded' : ''}${isSettingsWindow ? ' settings-window' : ''}`}>
       {isSettingsWindow && <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
@@ -362,22 +415,22 @@ export default function App() {
         </div>
       </header>}
 
-      <main className="main-content" ref={mainContent}>
+      <main className="main-content" ref={mainContent} onScroll={repositionStatistics}>
         {loading ? (
           <div className="state-panel" role="status"><LoaderCircle className="spin" size={25} /><h1>正在加载</h1><p>{isDesktop ? '读取本地设置与账号用量…' : '读取本地设置…'}</p></div>
         ) : bootError ? (
           <div className="state-panel"><AlertCircle size={28} /><h1>暂时无法加载</h1><p role="alert">{bootError}</p><Button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RefreshCw size={15} />重新加载</Button></div>
         ) : !isSettingsWindow ? (
-          <div ref={usageLayout} className={`usage-layout${statisticsExpanded ? ' has-statistics' : ''}`} onMouseEnter={cancelStatisticsLeave} onMouseLeave={scheduleStatisticsLeave} onFocus={cancelStatisticsLeave} onBlur={scheduleStatisticsLeave}>
+          <div ref={usageLayout} className={`usage-layout${statisticsExpanded ? ' has-statistics' : ''}`} onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)} onFocus={cancelStatisticsLeave} onBlur={() => scheduleStatisticsLeave()}>
             <div className="usage-overview">
             {dashboardError && <ErrorNotice>{dashboardError}</ErrorNotice>}
             {visibleProviders.length > 0 ? (
-              <div className="provider-list">{visibleProviders.map((provider) => <ProviderCard key={provider.id} provider={provider} now={now} active={selectedProvider?.id === provider.id} onShowStatistics={() => setStatisticsProvider(provider.id)} onRefresh={() => { void refreshProvider(provider.id); }} refreshing={refreshingProviders[provider.id]} refreshDisabled={saving} refreshError={providerErrors[provider.id]} />)}</div>
+              <div className="provider-list">{visibleProviders.map((provider) => <ProviderCard key={provider.id} provider={provider} now={now} active={selectedProvider?.id === provider.id} statisticsSide={statisticsSide} detachedStatistics={isDesktop} onLeaveStatistics={leaveStatisticsCard} onShowStatistics={(anchor, focus) => openStatistics(provider.id, anchor, focus)} onRefresh={() => { void refreshProvider(provider.id); }} refreshing={refreshingProviders[provider.id]} refreshDisabled={saving} refreshError={providerErrors[provider.id]} />)}</div>
             ) : (
               <div className="state-panel empty-state"><Layers3 size={29} /><h2>还没有显示的服务</h2><p>右键点击菜单栏图标，进入「偏好设置」，<br />启用 Codex 或 Claude 查看账号用量。</p></div>
             )}
             </div>
-            {selectedProvider && settings && <TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} account={selectedProvider.account} settings={settings} saving={saving} onPreferencesChange={saveStatisticsPreferences} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} accountStatisticsStore={accountStatisticsStore} onClose={() => setStatisticsProvider(null)} />}
+            {!isDesktop && selectedProvider && settings && <div onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)}><TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} account={selectedProvider.account} settings={settings} saving={saving} onPreferencesChange={saveStatisticsPreferences} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} accountStatisticsStore={accountStatisticsStore} onClose={() => setStatisticsProvider(null)} /></div>}
           </div>
         ) : draft ? (
           <div className="settings-page">
