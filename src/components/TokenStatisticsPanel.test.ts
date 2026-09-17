@@ -8,6 +8,7 @@ import type { TokenPeriod, TokenStatistics } from '../types';
 
 const statistics: TokenStatistics = {
   status: 'ready', message: null, updatedAt: '2026-09-16T10:00:00Z',
+  activity: { longestRunningTurnSec: 3725, currentStreakDays: 7, longestStreakDays: 30 },
   periods: ['day', 'week', 'month', 'year', 'all'].map((period, index) => ({
     period: period as TokenPeriod['period'], startAt: '2026-09-16T00:00:00Z', endAt: '2026-09-16T10:00:00Z',
     inputTokens: 1000 * (index + 1), cachedInputTokens: 250, cacheWriteTokens: 100, outputTokens: 500 * (index + 1), totalTokens: 1500 * (index + 1),
@@ -90,6 +91,11 @@ describe('token statistics', () => {
     expect(html).toContain('约等金额 · 人民币');
     expect(html).toContain('按固定估算汇率 1 美元 ≈ 7 元人民币换算');
     expect(html).not.toContain('US$');
+    expect(html).toContain('aria-label="本机活动概览"');
+    expect(html).toContain('<dt>最长任务时长</dt><dd>1 小时 2 分</dd>');
+    expect(html).toContain('<dt>当前连续活跃</dt><dd>7 天</dd>');
+    expect(html).toContain('<dt>最长连续活跃</dt><dd>30 天</dd>');
+    expect(html.indexOf('aria-label="本机活动概览"')).toBeLessThan(html.indexOf('role="radiogroup"'));
     expect(html).toContain(`<dt>请求数</dt><dd>${requests}<small>次</small>`);
     expect(html).toContain(`<dt>会话轮次</dt><dd>${turns}<small>轮</small>`);
   });
@@ -110,13 +116,16 @@ describe('token statistics', () => {
   });
 
   it('shows loading, unavailable and failed collection without fabricated totals', () => {
-    for (const html of [render(null, true), render({ ...statistics, status: 'unavailable', message: '没有会话记录', periods: [] }), render(null, false, '读取失败')]) {
+    for (const html of [render(null, true), render({ ...statistics, status: 'unavailable', message: '没有会话记录', periods: [], activity: null }), render(null, false, '读取失败')]) {
       expect(html).toContain('statistics-totals');
       expect(html).toContain('role="radiogroup"');
       expect(html).toContain('<span>Token 用量</span><strong>—</strong>');
       expect(html).not.toContain('¥0.00');
       expect(html).not.toContain('<strong>0</strong>');
       expect(html).not.toContain('class="statistics-state"');
+      expect(html).toContain('<dt>最长任务时长</dt><dd>—</dd>');
+      expect(html).toContain('<dt>当前连续活跃</dt><dd>—</dd>');
+      expect(html).toContain('<dt>最长连续活跃</dt><dd>—</dd>');
     }
     expect(render(null, false, '读取失败')).toContain('role="alert"');
     expect(render(null, true)).toContain('正在统计本机会话');
@@ -127,6 +136,8 @@ describe('token statistics', () => {
       expect(html).toContain('statistics-totals');
       expect(html).toContain('1.5K');
       expect(html).not.toContain('正在统计本机会话');
+      expect(html).toContain('<dt>最长任务时长</dt><dd>1 小时 2 分</dd>');
+      expect(html).toContain('<dt>当前连续活跃</dt><dd>7 天</dd>');
     }
     const failed = render(statistics, false, '数据目录暂不可用');
     expect(failed).toContain('role="alert"');
@@ -143,6 +154,8 @@ describe('token statistics', () => {
     expect(html).toContain('<dt>请求数</dt><dd>—');
     expect(html).toContain('<dt>输入（含缓存）</dt><dd>—</dd>');
     expect(html).not.toContain('1.5K');
+    expect(html).toContain('<dt>最长任务时长</dt><dd>—</dd>');
+    expect(html).toContain('<dt>最长连续活跃</dt><dd>—</dd>');
     expect(html).not.toContain('当前显示上次统计结果');
     expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('role="radiogroup"'));
   });
@@ -158,6 +171,28 @@ describe('token statistics', () => {
     const html = render({ ...statistics, status: 'unavailable', message: '没有会话记录', periods: [] }, true);
     expect(html).toContain('没有会话记录');
     expect(html).not.toContain('正在统计本机会话');
+  });
+
+  it('keeps activity unknown for older summaries while preserving recorded zero values', () => {
+    for (const activity of [undefined, null]) {
+      const html = render({ ...statistics, activity });
+      expect(html).toContain('1.5K');
+      expect(html).toContain('<dt>最长任务时长</dt><dd>—</dd>');
+      expect(html).toContain('<dt>当前连续活跃</dt><dd>—</dd>');
+      expect(html).toContain('<dt>最长连续活跃</dt><dd>—</dd>');
+    }
+    const html = render({ ...statistics, activity: { longestRunningTurnSec: null, currentStreakDays: 0, longestStreakDays: 3 } });
+    expect(html).toContain('<dt>最长任务时长</dt><dd>—</dd>');
+    expect(html).toContain('<dt>当前连续活跃</dt><dd>0 天</dd>');
+    expect(html).toContain('<dt>最长连续活跃</dt><dd>3 天</dd>');
+    expect(render({ ...statistics, activity: { longestRunningTurnSec: 0, currentStreakDays: 0, longestStreakDays: 0 } })).toContain('<dt>最长任务时长</dt><dd>0 秒</dd>');
+  });
+
+  it('shows known activity even when the local records contain no token usage', () => {
+    const html = render({ ...statistics, status: 'unavailable', message: '未找到本机 Token 用量记录', periods: [] });
+    expect(html).toContain('<dt>最长任务时长</dt><dd>1 小时 2 分</dd>');
+    expect(html).toContain('<dt>当前连续活跃</dt><dd>7 天</dd>');
+    expect(html).toContain('<span>Token 用量</span><strong>—</strong>');
   });
 
   it.each([['week', '本周'], ['year', '本年'], ['all', '全部']] as const)('does not substitute another period when %s is unavailable', (period, label) => {

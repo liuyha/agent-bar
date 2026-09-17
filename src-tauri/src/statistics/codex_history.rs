@@ -73,6 +73,8 @@ pub(super) struct ParserState {
     pi_provider: Option<String>,
     pi_model: Option<String>,
     pi_session: Option<String>,
+    #[serde(default)]
+    pending_tasks: HashMap<String, DateTime<Utc>>,
 }
 
 #[derive(Deserialize)]
@@ -142,6 +144,8 @@ struct Payload {
     #[serde(alias = "turnId")]
     turn_id: Option<String>,
     started_at: Option<i64>,
+    completed_at: Option<i64>,
+    duration_ms: Option<f64>,
     trigger_turn: Option<bool>,
     usage: Option<RawUsage>,
     response_id: Option<String>,
@@ -372,11 +376,22 @@ fn handle_record(record: Record, state: &mut ParserState, parsed: &mut ParsedFil
         return;
     }
     let timestamp = record.timestamp.as_ref().and_then(Timestamp::utc);
+    let activity_timestamp = if record.kind == "event_msg" {
+        match payload.kind.as_deref() {
+            Some("task_started") => payload.started_at,
+            Some("task_complete" | "task_completed" | "turn_aborted") => payload.completed_at,
+            _ => None,
+        }
+        .and_then(|time| DateTime::from_timestamp(time, 0))
+    } else {
+        None
+    };
     let inherited = if let Some(boundary) = state.owned_ordinal {
         record.ordinal.is_none_or(|ordinal| ordinal < boundary)
     } else {
         state.parent.is_some()
-            && timestamp
+            && activity_timestamp
+                .or(timestamp)
                 .zip(state.fork_time)
                 .is_some_and(|(time, fork)| time < fork)
     };
@@ -424,8 +439,48 @@ fn handle_record(record: Record, state: &mut ParserState, parsed: &mut ParsedFil
         return;
     }
     let is_started = record.kind == "event_msg" && payload.kind.as_deref() == Some("task_started");
+    let is_completed = record.kind == "event_msg"
+        && matches!(
+            payload.kind.as_deref(),
+            Some("task_complete" | "task_completed")
+        );
+    let is_aborted = record.kind == "event_msg" && payload.kind.as_deref() == Some("turn_aborted");
     let is_legacy = record.kind == "event_msg" && payload.kind.as_deref() == Some("token_count");
     let is_modern = record.kind == "token_usage_record";
+    if is_completed || is_aborted {
+        if state.subagent {
+            return;
+        }
+        let Some(id) = clean(payload.turn_id.as_deref()) else {
+            return;
+        };
+        let pending = state.pending_tasks.remove(&id);
+        if is_aborted {
+            return;
+        }
+        // Forks can rewrite the envelope timestamp. Explicit task metadata preserves the
+        // actual execution instants; use paired envelopes only for older log formats.
+        let started_at = payload
+            .started_at
+            .and_then(|time| DateTime::from_timestamp(time, 0))
+            .or(pending);
+        let Some(completed_at) = payload
+            .completed_at
+            .and_then(|time| DateTime::from_timestamp(time, 0))
+            .or(timestamp)
+        else {
+            return;
+        };
+        if let Some(task) = super::activity::CompletedTask::new(
+            format!("codex-task:{id}"),
+            started_at,
+            completed_at,
+            payload.duration_ms,
+        ) {
+            parsed.completed_tasks.push(task);
+        }
+        return;
+    }
     if !is_started && !is_legacy && !is_modern {
         return;
     }
@@ -438,12 +493,15 @@ fn handle_record(record: Record, state: &mut ParserState, parsed: &mut ParsedFil
         if !state.subagent {
             if let Some(id) = clean(payload.turn_id.as_deref()) {
                 state.current_turn = id.clone();
+                let started_at = payload
+                    .started_at
+                    .and_then(|time| DateTime::from_timestamp(time, 0))
+                    .unwrap_or(timestamp);
+                // Repeated/copied start notifications must not restart a running task.
+                state.pending_tasks.entry(id.clone()).or_insert(started_at);
                 parsed.turns.push(Turn {
                     key: format!("codex-turn:{id}"),
-                    timestamp: payload
-                        .started_at
-                        .and_then(|time| DateTime::from_timestamp(time, 0))
-                        .unwrap_or(timestamp),
+                    timestamp: started_at,
                 });
             } else {
                 state.has_turn_format = false;

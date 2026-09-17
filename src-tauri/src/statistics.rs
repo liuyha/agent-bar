@@ -4,6 +4,9 @@
 //! Codex records request usage and also repeats cumulative snapshots; Claude can emit several
 //! chunks for one message. Normalize these into unique requests before calendar aggregation.
 
+mod activity;
+#[cfg(test)]
+mod activity_tests;
 mod cache;
 mod codex_history;
 mod pricing;
@@ -30,6 +33,17 @@ pub struct TokenStatistics {
     pub message: Option<String>,
     pub periods: Vec<TokenPeriod>,
     pub updated_at: String,
+    /// All retained local history, independently of the selected token period.
+    #[serde(default)]
+    pub activity: Option<ActivityStatistics>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityStatistics {
+    pub longest_running_turn_sec: Option<u64>,
+    pub current_streak_days: Option<u64>,
+    pub longest_streak_days: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -118,6 +132,11 @@ struct ParsedFile {
     malformed: bool,
     #[serde(default)]
     codex_state: Option<codex_history::ParserState>,
+    #[serde(default)]
+    completed_tasks: Vec<activity::CompletedTask>,
+    /// Human activity whose missing identity prevents turn-count deduplication.
+    #[serde(default)]
+    activity_timestamps: Vec<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -138,8 +157,8 @@ struct FileCache {
     cache_error: Option<String>,
 }
 
-const CODEX_PARSER_VERSION: u32 = 2;
-const CLAUDE_PARSER_VERSION: u32 = 1;
+const CODEX_PARSER_VERSION: u32 = 3;
+const CLAUDE_PARSER_VERSION: u32 = 2;
 
 fn parser_version(provider: ProviderId) -> u32 {
     match provider {
@@ -597,11 +616,29 @@ fn collect_roots(
     } else {
         message
     };
+    let activity = activity::summarize(
+        end.with_timezone(&Local),
+        unique
+            .values()
+            .map(|event| event.timestamp)
+            .chain(turns.values().copied())
+            .chain(
+                cache
+                    .files
+                    .values()
+                    .flat_map(|file| file.parsed.activity_timestamps.iter().copied()),
+            ),
+        cache
+            .files
+            .values()
+            .flat_map(|file| file.parsed.completed_tasks.iter()),
+    );
     TokenStatistics {
         status,
         message,
         periods,
         updated_at: iso(windows[0].end),
+        activity,
     }
 }
 
@@ -686,6 +723,9 @@ struct Record {
     is_sidechain: bool,
     #[serde(rename = "isSynthetic", default)]
     is_synthetic: bool,
+    subtype: Option<String>,
+    #[serde(rename = "durationMs")]
+    duration_ms: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -830,7 +870,8 @@ fn parse_reader(
         }
         line_number += 1;
         if !((line.contains("\"assistant\"") && line.contains("\"usage\""))
-            || line.contains("\"user\""))
+            || line.contains("\"user\"")
+            || line.contains("\"turn_duration\""))
         {
             continue;
         }
@@ -850,6 +891,24 @@ fn parse_reader(
             parsed.malformed = true;
             continue;
         };
+        if record.kind == "system" && record.subtype.as_deref() == Some("turn_duration") {
+            if !record.is_sidechain && !record.is_meta && !record.is_synthetic {
+                if let Some(task) = activity::CompletedTask::new(
+                    record
+                        .uuid
+                        .map(|id| format!("claude-duration:{id}"))
+                        .unwrap_or_else(|| {
+                            format!("claude-duration:{}:{line_number}", path.display())
+                        }),
+                    None,
+                    timestamp,
+                    record.duration_ms,
+                ) {
+                    parsed.completed_tasks.push(task);
+                }
+            }
+            continue;
+        }
         if record.kind == "user" {
             has_turn_format = true;
             if !record.is_meta
@@ -868,6 +927,7 @@ fn parse_reader(
                     });
                 } else {
                     parsed.unknown_turns.push(timestamp);
+                    parsed.activity_timestamps.push(timestamp);
                 }
             }
             continue;

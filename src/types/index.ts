@@ -64,10 +64,18 @@ export interface TokenPeriod {
   conversationTurns: number | null;
 }
 
+export interface ActivityStatistics {
+  longestRunningTurnSec: number | null;
+  currentStreakDays: number | null;
+  longestStreakDays: number | null;
+}
+
 export interface TokenStatistics {
   status: 'ready' | 'unavailable' | 'error';
   message: string | null;
   periods: TokenPeriod[];
+  /** Optional while reading a summary saved before activity statistics were introduced. */
+  activity?: ActivityStatistics | null;
   updatedAt: string;
 }
 
@@ -77,12 +85,9 @@ export interface AccountUsageSnapshot {
   message: string | null;
   account: string | null;
   accountId: string | null;
-  summary: {
+  summary: ActivityStatistics & {
     lifetimeTokens: number | null;
     peakDailyTokens: number | null;
-    longestRunningTurnSec: number | null;
-    currentStreakDays: number | null;
-    longestStreakDays: number | null;
   };
   dailyUsage: { date: string; tokens: number }[] | null;
   serviceUpdatedAt: string | null;

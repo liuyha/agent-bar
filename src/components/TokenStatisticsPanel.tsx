@@ -10,6 +10,7 @@ import { periodLabels } from '../lib/statisticsPeriods';
 import { AccountStatisticsView } from './AccountStatisticsContent';
 import { StatisticsPeriodSwitch } from './StatisticsPeriodSwitch';
 import { StatisticsErrorNotice } from './StatisticsErrorNotice';
+import { ActivityStatisticsSummary } from './ActivityStatisticsSummary';
 import type { AppSettings, CodexStatisticsPreference, ProviderId, TokenPeriod, TokenStatistics } from '../types';
 import './TokenStatisticsPanel.css';
 
@@ -31,6 +32,7 @@ export function StatisticsContent({ statistics, loading, error, selectedPeriod =
     {failure && <StatisticsErrorNotice message={`更新失败：${failure}${ready ? ' 当前显示上次统计结果。' : ''}`} busy={loading} onRetry={onRetry} />}
     {!failure && !ready && <p className="statistics-notice" role="status">{statistics?.message || (loading ? '正在统计本机会话…首次读取历史记录可能需要一些时间。' : '暂无可统计的本机会话记录。')}</p>}
     {!failure && ready && statistics.message && <p className="statistics-notice" role="status">{statistics.message}</p>}
+    <ActivityStatisticsSummary statistics={statistics?.status === 'error' ? null : statistics?.activity} source="local" />
     <StatisticsPeriodSwitch selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
     <div className="statistics-periods">
       {period ? <section className="statistics-period" key={period.period} aria-label={`${periodLabels[period.period]} Token 统计`}>

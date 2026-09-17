@@ -1,20 +1,17 @@
 import { useState, useSyncExternalStore } from 'react';
-import { createAccountStatisticsStore, formatDuration, type AccountStatisticsState } from '../lib/accountStatistics';
+import { createAccountStatisticsStore, type AccountStatisticsState } from '../lib/accountStatistics';
 import { accountStatisticsPeriod } from '../lib/accountStatisticsPeriods';
 import { formatCount, formatTokens } from '../lib/format';
 import { periodLabels } from '../lib/statisticsPeriods';
 import { StatisticsPeriodSwitch } from './StatisticsPeriodSwitch';
 import { StatisticsErrorNotice } from './StatisticsErrorNotice';
+import { ActivityStatisticsSummary } from './ActivityStatisticsSummary';
 import type { AccountUsageSnapshot, CodexStatisticsSource, TokenPeriod } from '../types';
 
 function fullTime(value: string | null): string {
   if (!value || !Number.isFinite(Date.parse(value))) return '—';
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
-}
-
-function number(value: number | null, suffix = ''): string {
-  return value === null || !Number.isFinite(value) ? '—' : `${value.toLocaleString('zh-CN', { maximumFractionDigits: 4 })}${suffix}`;
 }
 
 interface Props extends AccountStatisticsState {
@@ -52,11 +49,7 @@ export function AccountStatisticsContent({ statistics, loading, refreshing, erro
     : busy ? loading ? '正在读取服务端统计…' : '暂无本地缓存，正在后台获取服务端统计…' : statistics?.message || '暂无服务端统计缓存。';
   return <>
     {failure ? <StatisticsErrorNotice message={`更新失败：${failure}${ready ? ' 当前显示本地缓存。' : ''}`} busy={busy} onRetry={onRetry} /> : statusMessage && <p className="statistics-notice" role="status">{statusMessage}</p>}
-    <dl className="account-statistics-metrics account-activity-metrics" aria-label="账号活动概览">
-      <div><dt>最长任务时长</dt><dd>{formatDuration(summary?.longestRunningTurnSec ?? null)}</dd></div>
-      <div><dt>当前连续活跃</dt><dd>{number(summary?.currentStreakDays ?? null, ' 天')}</dd></div>
-      <div><dt>最长连续活跃</dt><dd>{number(summary?.longestStreakDays ?? null, ' 天')}</dd></div>
-    </dl>
+    <ActivityStatisticsSummary statistics={summary} />
     <StatisticsPeriodSwitch selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
     <AccountPeriodStatistics statistics={ready ? statistics : null} selectedPeriod={selectedPeriod} />
     <div className="account-statistics-timestamps">
