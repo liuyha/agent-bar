@@ -1,7 +1,7 @@
 {
   "name": "agentbar",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "AI 编程工具用量托盘应用",
   "license": "MIT",
   "type": "module",
