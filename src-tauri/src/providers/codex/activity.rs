@@ -27,7 +27,7 @@ const NO_STATS: &str = "服务端暂未返回可展示的 Token 活动数据";
 /// Request guard, including homes without readable credentials. The digest never
 /// enters logs, frontend data, settings, or network requests.
 pub(crate) fn account_statistics_scope_key() -> String {
-    let home = auth::resolve_home(env::var_os("CODEX_HOME"), env::var_os("HOME"));
+    let home = auth::resolve_home(env::var_os("CODEX_HOME"), crate::user_paths::home_dir());
     scope_key(home.as_deref())
 }
 
@@ -38,7 +38,7 @@ fn scope_key(home: Option<&Path>) -> String {
 /// Only an identifiable native login can own a persistent cache. Missing,
 /// unreadable, invalid, or API-key-only auth must never share an empty scope.
 pub(crate) fn account_statistics_cache_scope_key() -> Option<String> {
-    let home = auth::resolve_home(env::var_os("CODEX_HOME"), env::var_os("HOME"));
+    let home = auth::resolve_home(env::var_os("CODEX_HOME"), crate::user_paths::home_dir());
     cache_scope_key(home.as_deref())
 }
 
@@ -90,7 +90,7 @@ fn scope_keys(home: Option<&Path>) -> (String, bool) {
 
 pub(crate) fn collect_account_statistics(source: CodexStatisticsSource) -> AccountUsageSnapshot {
     let now = Utc::now();
-    let home = auth::resolve_home(env::var_os("CODEX_HOME"), env::var_os("HOME"));
+    let home = auth::resolve_home(env::var_os("CODEX_HOME"), crate::user_paths::home_dir());
     let result = collect_scoped(
         source,
         now,

@@ -143,10 +143,9 @@ fn config_dir() -> Result<(PathBuf, bool), Failure> {
     if let Some(directory) = env::var_os("CLAUDE_CONFIG_DIR").filter(|value| !value.is_empty()) {
         return Ok((PathBuf::from(directory), true));
     }
-    let home = env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE"))
+    let home = crate::user_paths::home_dir()
         .ok_or_else(|| Failure::Error("无法定位本机 Claude 配置目录。".into()))?;
-    Ok((PathBuf::from(home).join(".claude"), false))
+    Ok((home.join(".claude"), false))
 }
 
 fn unsupported_auth(

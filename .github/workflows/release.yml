@@ -1,0 +1,207 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '已推送的版本标签，例如 v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate version and frontend
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+      - name: Validate tag and all application versions
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/check-release-version.mjs
+      - name: Record immutable source commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - platform: macos-15
+            target: x86_64-apple-darwin
+            bundles: dmg
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 xdg-utils
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm rust:check
+      - name: Build installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        with:
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+      - name: Keep installers for release and inspection
+        uses: actions/upload-artifact@v7
+        with:
+          name: installers-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Assemble draft release
+    needs: [validate, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installers-*
+          path: artifacts
+      - name: Verify installer set and generate checksums
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import shutil
+
+          expected = {
+              'aarch64-apple-darwin': ['.dmg'],
+              'x86_64-apple-darwin': ['.dmg'],
+              'x86_64-pc-windows-msvc': ['.exe', '.msi'],
+              'x86_64-unknown-linux-gnu': ['.deb', '.AppImage'],
+          }
+          output = pathlib.Path('release-assets')
+          output.mkdir()
+          for target, extensions in expected.items():
+              root = pathlib.Path('artifacts') / f'installers-{target}'
+              for extension in extensions:
+                  matches = list(root.rglob(f'*{extension}'))
+                  if len(matches) != 1:
+                      raise SystemExit(f'{target}: expected one {extension}, got {matches}')
+                  source = matches[0]
+                  destination = output / source.name
+                  if destination.exists():
+                      raise SystemExit(f'Duplicate asset name: {source.name}')
+                  shutil.copyfile(source, destination)
+          checksums = []
+          for asset in sorted(output.iterdir()):
+              hasher = hashlib.sha256()
+              with asset.open('rb') as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                      hasher.update(chunk)
+              checksums.append(f'{hasher.hexdigest()}  {asset.name}\n')
+          (output / 'SHA256SUMS.txt').write_text(''.join(checksums))
+          PY
+      - name: Verify tag still points to the built commit
+        shell: bash
+        run: |
+          git fetch --depth=1 origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$RELEASE_COMMIT"
+      - name: Create or update draft assets
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > release-is-draft.txt; then
+            if [ "$(cat release-is-draft.txt)" != 'true' ]; then
+              echo 'Refusing to overwrite a published release. Use a new version tag.' >&2
+              exit 1
+            fi
+          else
+            cat > release-notes.md <<'NOTES'
+          ## 下载
+          - macOS：按芯片选择 aarch64（Apple Silicon）或 x64（Intel）的 DMG。
+          - Windows x64：选择安装程序 .exe 或 .msi。
+          - Linux x64：选择 .AppImage 或 .deb，通过托盘菜单打开面板。
+          - SHA256SUMS.txt 提供安装包校验值。
+
+          ## 当前支持范围
+          Windows / Linux 为实验支持，尚需在对应系统验证安装、账号读取和托盘交互。
+          macOS 使用 ad-hoc 签名，尚未进行 Apple 公证；Windows 安装包尚未签名。
+          请先在原工具中完成 Codex / Claude Code 登录。
+          NOTES
+            args=(--draft --verify-tag --title "AgentBar $RELEASE_TAG" --notes-file release-notes.md)
+            gh release create "$RELEASE_TAG" "${args[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          release_url=$(gh release view "$RELEASE_TAG" --json url --jq '.url')
+          {
+            echo "### AgentBar $RELEASE_TAG"
+            echo "全部四种目标的安装包与 SHA-256 校验文件已上传到 [Release 草稿]($release_url)。"
+            echo '请下载验证并完善说明，再在 GitHub 点击 Publish release。'
+          } >> "$GITHUB_STEP_SUMMARY"

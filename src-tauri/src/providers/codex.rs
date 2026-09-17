@@ -39,7 +39,7 @@ impl super::UsageProvider for CodexProvider {
     }
 
     fn fetch_usage(&self, now: DateTime<Utc>) -> Result<ProviderUsage, String> {
-        let home = auth::resolve_home(env::var_os("CODEX_HOME"), env::var_os("HOME"));
+        let home = auth::resolve_home(env::var_os("CODEX_HOME"), crate::user_paths::home_dir());
         let scope = activity::cache_scope_key(home.as_deref());
         let credentials = auth::load(home.as_deref());
         let mut authentication_failed = false;
@@ -338,26 +338,72 @@ fn plan_label(plan: Option<&str>) -> String {
 }
 
 fn find_codex() -> Option<PathBuf> {
-    let mut candidates = vec![
-        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
-        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
-    ];
-    if let Some(home) = env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    let home = crate::user_paths::home_dir();
+    let path = env::var_os("PATH");
+    let app_data = env::var_os("APPDATA").map(PathBuf::from);
+    codex_candidates(
+        home.as_deref(),
+        path.as_deref(),
+        app_data.as_deref(),
+        cfg!(windows),
+    )
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+    // The CLI starts in the user profile, so relative PATH entries must be
+    // resolved before changing its working directory.
+    .and_then(|candidate| std::path::absolute(candidate).ok())
+}
+
+fn codex_candidates(
+    home: Option<&Path>,
+    path: Option<&std::ffi::OsStr>,
+    app_data: Option<&Path>,
+    windows: bool,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if !windows {
         candidates.extend([
-            home.join("Applications/Codex.app/Contents/Resources/codex"),
-            home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
-            home.join(".local/bin/codex"),
+            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        ]);
+        if let Some(home) = home {
+            candidates.extend([
+                home.join("Applications/Codex.app/Contents/Resources/codex"),
+                home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
+            ]);
+        }
+    }
+    let mut directories = Vec::new();
+    if let Some(home) = home {
+        directories.push(home.join(".local/bin"));
+    }
+    if let Some(path) = path {
+        directories.extend(env::split_paths(path));
+    }
+    if windows {
+        // GUI launches can inherit an older PATH than the npm installation.
+        if let Some(app_data) = app_data {
+            directories.push(app_data.join("npm"));
+        } else if let Some(home) = home {
+            directories.push(home.join("AppData/Roaming/npm"));
+        }
+    } else {
+        directories.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
         ]);
     }
-    if let Some(path) = env::var_os("PATH") {
-        candidates.extend(env::split_paths(&path).map(|directory| directory.join("codex")));
+    let names: &[&str] = if windows {
+        // npm also writes an extensionless POSIX shell script; it is not a
+        // Windows executable. Prefer native installs, then the npm cmd shim.
+        &["codex.exe", "codex.cmd", "codex.bat"]
+    } else {
+        &["codex"]
+    };
+    for directory in directories {
+        candidates.extend(names.iter().map(|name| directory.join(name)));
     }
-    candidates.extend([
-        PathBuf::from("/opt/homebrew/bin/codex"),
-        PathBuf::from("/usr/local/bin/codex"),
-    ]);
-    candidates.into_iter().find(|candidate| candidate.is_file())
+    candidates
 }
 
 struct AppServer {
@@ -365,10 +411,12 @@ struct AppServer {
     input: ChildStdin,
     messages: Receiver<Result<Value, &'static str>>,
     deadline: Instant,
+    #[cfg(windows)]
+    batch_launcher: bool,
 }
 
 impl AppServer {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn start(executable: PathBuf, timeout: Duration) -> Result<Self, String> {
         Self::start_scoped(executable, timeout, None)
     }
@@ -378,7 +426,14 @@ impl AppServer {
         timeout: Duration,
         home: Option<&Path>,
     ) -> Result<Self, String> {
-        let mut command = Command::new(executable);
+        // Rust handles .cmd/.bat with cmd.exe quoting. All arguments here are
+        // fixed literals; do not assemble a shell command from paths or auth.
+        let mut command = Command::new(&executable);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
         command
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
@@ -391,7 +446,7 @@ impl AppServer {
         // If resolving an absolute home failed (e.g. deleted launch directory),
         // keep the inherited directory rather than changing relative auth scope.
         if home.is_none_or(Path::is_absolute) {
-            if let Some(home) = env::var_os("HOME") {
+            if let Some(home) = crate::user_paths::home_dir() {
                 command.current_dir(home);
             }
         }
@@ -426,6 +481,13 @@ impl AppServer {
             input,
             messages,
             deadline: Instant::now() + timeout,
+            #[cfg(windows)]
+            batch_launcher: executable
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+                }),
         })
     }
 
@@ -485,6 +547,22 @@ impl AppServer {
 impl Drop for AppServer {
     fn drop(&mut self) {
         // Also runs on timeout and parse errors; do not leave a background server per refresh.
+        #[cfg(windows)]
+        if self.batch_launcher {
+            use std::os::windows::process::CommandExt;
+            // Killing only cmd.exe leaves npm's node/Codex child running.
+            // Use the system utility and a numeric owned PID, never a shell.
+            let taskkill = env::var_os("SystemRoot")
+                .map(|root| PathBuf::from(root).join("System32/taskkill.exe"))
+                .unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+            let _ = Command::new(taskkill)
+                .args(["/PID", &self.child.id().to_string(), "/T", "/F"])
+                .creation_flags(0x08000000)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -498,6 +576,57 @@ mod tests {
 
     fn account() -> Value {
         json!({ "account": { "type": "chatgpt", "email": "user@example.com", "planType": "pro" } })
+    }
+
+    #[test]
+    fn windows_cli_candidates_support_native_and_npm_installations() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("Example User");
+        let bin = root.path().join("Node Tools");
+        let roaming = root.path().join("Roaming");
+        let path = env::join_paths([&bin]).unwrap();
+        let candidates = codex_candidates(Some(&profile), Some(&path), Some(&roaming), true);
+        let exe = bin.join("codex.exe");
+        let cmd = bin.join("codex.cmd");
+        assert!(
+            candidates.iter().position(|p| p == &exe).unwrap()
+                < candidates.iter().position(|p| p == &cmd).unwrap()
+        );
+        assert!(!candidates.contains(&bin.join("codex")));
+        assert!(candidates.contains(&roaming.join("npm/codex.cmd")));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("codex"), "POSIX npm shim").unwrap();
+        std::fs::write(&cmd, "@echo off").unwrap();
+        assert_eq!(candidates.iter().find(|p| p.is_file()), Some(&cmd));
+        std::fs::write(&exe, "native placeholder").unwrap();
+        assert_eq!(candidates.iter().find(|p| p.is_file()), Some(&exe));
+        assert!(codex_candidates(Some(&profile), None, None, true)
+            .contains(&profile.join("AppData/Roaming/npm/codex.cmd")));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_cmd_launcher_supports_spaces_arguments_scoped_home_and_rpc() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("Node Tools");
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("codex.cmd");
+        let home = root.path().join("scoped profile");
+        std::fs::write(
+            &path,
+            format!(
+                "@echo off\r\nif not \"%1\"==\"app-server\" exit /b 1\r\nif not \"%2\"==\"--listen\" exit /b 2\r\nif not \"%3\"==\"stdio://\" exit /b 3\r\nif not \"%CODEX_HOME%\"==\"{}\" exit /b 4\r\nset /p request=\r\necho {{\"id\":1,\"result\":{{\"ok\":true}}}}\r\nset /p request=\r\n",
+                home.display()
+            ),
+        )
+        .unwrap();
+        let mut server =
+            AppServer::start_scoped(path, Duration::from_secs(5), Some(&home)).unwrap();
+        assert_eq!(
+            server.request(1, "initialize", None, "初始化失败").unwrap(),
+            json!({"ok": true})
+        );
+        drop(server);
     }
 
     #[test]

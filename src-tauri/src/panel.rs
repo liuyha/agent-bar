@@ -455,6 +455,8 @@ fn statistics_placement(
 fn apply_position(window: &WebviewWindow, bounds: Bounds, scale: f64) -> tauri::Result<()> {
     // macOS converts physical positions with the window's old scale factor.
     // Use desktop points there so moving to a different-DPI screen is correct.
+    #[cfg(not(target_os = "macos"))]
+    let _ = scale;
     #[cfg(target_os = "macos")]
     window.set_position(tauri::LogicalPosition::new(
         bounds.x / scale,

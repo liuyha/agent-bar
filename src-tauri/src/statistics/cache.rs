@@ -291,6 +291,7 @@ pub(super) fn can_append(path: &Path, previous: &Checkpoint) -> io::Result<bool>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::io::Write;
 
     #[test]

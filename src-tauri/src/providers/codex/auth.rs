@@ -50,16 +50,11 @@ pub(super) enum CredentialError {
     Invalid,
 }
 
-pub(super) fn resolve_home(
-    configured: Option<OsString>,
-    home: Option<OsString>,
-) -> Option<PathBuf> {
+pub(super) fn resolve_home(configured: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
     // Explicit homes never fall through to ~/.codex, even when their auth is absent.
     let configured = configured.filter(|value| !value.to_string_lossy().trim().is_empty());
-    let path = configured
-        .map(PathBuf::from)
-        .or_else(|| home.map(|home| PathBuf::from(home).join(".codex")))?;
-    // The CLI starts in HOME rather than AgentBar's launch directory. Resolve
+    let path = crate::user_paths::config_dir(configured, home, ".codex")?;
+    // The CLI starts in the user profile rather than AgentBar's launch directory. Resolve
     // relative CODEX_HOME before handing it to both readers so scope cannot drift.
     Some(if path.is_absolute() {
         path
@@ -274,11 +269,7 @@ mod tests {
         .unwrap();
         let scoped = directory.path().join("scoped");
         std::fs::create_dir(&scoped).unwrap();
-        let home = resolve_home(
-            Some(scoped.clone().into_os_string()),
-            Some(ambient.into_os_string()),
-        )
-        .unwrap();
+        let home = resolve_home(Some(scoped.clone().into_os_string()), Some(ambient)).unwrap();
         assert!(matches!(load(Some(&home)), Err(CredentialError::Missing)));
         let contents = br#"{"personalAccessToken":"scoped-secret"}"#;
         std::fs::write(scoped.join("auth.json"), contents).unwrap();

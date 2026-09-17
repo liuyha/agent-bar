@@ -16,13 +16,14 @@
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/*.test.mjs",
     "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "tauri": "tauri",
     "desktop:dev": "node scripts/native.mjs dev",
     "desktop:build": "node scripts/native.mjs build",
     "doctor": "node scripts/doctor.mjs",
+    "release:check": "node scripts/check-release-version.mjs",
     "rust:check": "node scripts/native.mjs check"
   },
   "dependencies": {

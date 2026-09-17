@@ -93,4 +93,4 @@ macOS 托盘摘要显示剩余比例和重置倒计时，优先选读取成功�
 
 统计缓存不保存认证令牌、对话正文或接口原始响应。macOS / Unix 数据目录权限为 `0700`，JSON 与 SQLite 文件权限为 `0600`，JSON 采用原子写入。旧 Tauri 缓存保持原样，新目录从源日志重建。
 
-macOS 设置路径为 `~/Library/Application Support/dev.agentbar.desktop/settings.json`；浏览器预览使用 `agentbar.settings.v1` 的 localStorage，与桌面设置不互通。开机启动、自动更新、签名和发布流程尚未接入。上游参考与第三方许可见 [第三方声明](third-party-notices.md)，项目许可见 [MIT License](../LICENSE)。
+macOS 设置路径为 `~/Library/Application Support/dev.agentbar.desktop/settings.json`；浏览器预览使用 `agentbar.settings.v1` 的 localStorage，与桌面设置不互通。GitHub Actions 按版本标签构建各平台安装包并汇总到 Release 草稿，操作见 [发布指南](releasing.md)。macOS 构建使用 ad-hoc 签名，开发者证书、公证、Windows 代码签名、开机启动与自动更新尚未接入。上游参考与第三方许可见 [第三方声明](third-party-notices.md)，项目许可见 [MIT License](../LICENSE)。

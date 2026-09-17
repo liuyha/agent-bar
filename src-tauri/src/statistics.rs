@@ -174,14 +174,12 @@ pub fn read_cached(
 pub fn collect(provider: ProviderId, cache_dir: Option<&Path>) -> Result<TokenStatistics, String> {
     let local_now = Local::now();
     let windows = calendar_windows(local_now)?;
-    let home = env::var_os("HOME").map(PathBuf::from);
+    let home = crate::user_paths::home_dir();
     let roots = match provider {
         ProviderId::Codex => {
-            let root = env::var_os("CODEX_HOME")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .or_else(|| home.as_ref().map(|path| path.join(".codex")))
-                .ok_or("无法定位本机 Codex 日志目录")?;
+            let root =
+                crate::user_paths::config_dir(env::var_os("CODEX_HOME"), home.clone(), ".codex")
+                    .ok_or("无法定位本机 Codex 日志目录")?;
             let mut roots = vec![root.join("sessions"), root.join("archived_sessions")];
             if let Some(home) = &home {
                 roots.extend(codex_history::additional_roots(home));
@@ -189,11 +187,12 @@ pub fn collect(provider: ProviderId, cache_dir: Option<&Path>) -> Result<TokenSt
             roots
         }
         ProviderId::Claude => {
-            let root = env::var_os("CLAUDE_CONFIG_DIR")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .or_else(|| home.as_ref().map(|path| path.join(".claude")))
-                .ok_or("无法定位本机 Claude 日志目录")?;
+            let root = crate::user_paths::config_dir(
+                env::var_os("CLAUDE_CONFIG_DIR"),
+                home.clone(),
+                ".claude",
+            )
+            .ok_or("无法定位本机 Claude 日志目录")?;
             vec![root.join("projects")]
         }
     };

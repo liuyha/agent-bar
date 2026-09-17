@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
+  <a href="docs/releasing.md">构建与发布</a> ·
   <a href="#数据与隐私">数据与隐私</a> ·
   <a href="#开发与贡献">开发与贡献</a> ·
   <a href="LICENSE">MIT License</a>
@@ -37,9 +38,9 @@ AgentBar 是一款基于 **Tauri 2、React、TypeScript 和 Rust** 的开源桌�
 | 平台 | 当前状态 |
 | --- | --- |
 | macOS | 主要开发与验证平台，构建最低版本为 macOS 12 |
-| Windows / Linux | 保留 Tauri 工程配置，尚未完成平台兼容性验证 |
+| Windows / Linux | 提供自动构建流程，实验支持；尚未完成对应系统的原生验收 |
 
-当前提供源码构建流程，应用签名、自动更新和开机启动尚未接入。部分用量接口属于上游内部接口，兼容性可能随上游版本变化。
+支持源码构建和 GitHub Actions 多平台打包，发布后的安装包见 [Releases](https://github.com/liuyha/agent-bar/releases)。macOS 自动构建使用 ad-hoc 签名，尚未接入开发者证书和公证；Windows 安装包未签名。自动更新和开机启动尚未接入。部分用量接口属于上游内部接口，兼容性可能随上游版本变化。
 
 ## 快速开始
 
@@ -83,6 +84,8 @@ pnpm desktop:build
 
 产物位于 `src-tauri/target/release/bundle/`，安装包格式随构建平台而定。该命令构建本机平台的应用，不代表已完成签名或其他平台验证。
 
+维护者可通过版本标签触发 GitHub Actions，在云端生成 macOS、Windows 和 Linux 安装包并汇总到 Release 草稿，无需持有各平台电脑。操作步骤见 [自动构建与发布](docs/releasing.md)。
+
 仅预览前端时可运行 `pnpm dev`，打开 `http://127.0.0.1:1420`；偏好设置地址为 `/#settings`。浏览器预览不需要 Rust，也无法读取本机账号或会话日志，会显示桌面端使用提示。
 
 ## 数据与隐私
@@ -115,6 +118,7 @@ pnpm desktop:build
 | `pnpm desktop:dev` | 桌面开发 |
 | `pnpm check` | 前端类型检查、ESLint、测试和生产构建 |
 | `pnpm rust:check` | Rust 格式检查、Clippy 和测试 |
+| `pnpm release:check` | 检查发布版本在四处配置中保持一致 |
 | `pnpm desktop:build` | 构建当前平台桌面应用 |
 
 提交前运行与改动相关的检查；涉及原生窗口、托盘或账号读取时，还需在桌面端验证。依赖变更应同步维护对应的 `pnpm-lock.yaml` 或 `src-tauri/Cargo.lock`。CI 配置见 [检查工作流](.github/workflows/ci.yml)。
@@ -133,6 +137,7 @@ licenses/           第三方许可证
 - [架构说明](docs/architecture.md)：模块职责、数据流和扩展约定。
 - [账号服务端统计](docs/account-statistics.md)：来源、刷新机制和指标含义。
 - [Token 计价依据](docs/token-pricing.md)：内置价格表、核验日期和估算边界。
+- [自动构建与发布](docs/releasing.md)：版本号、构建矩阵、Release 草稿与正式发布步骤。
 - [第三方声明](docs/third-party-notices.md)：参考项目、组件许可和图标来源。
 
 ## 许可证与致谢

@@ -7,6 +7,7 @@ mod state;
 mod statistics;
 mod storage;
 mod tray_summary;
+mod user_paths;
 
 use std::time::Duration;
 
