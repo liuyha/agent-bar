@@ -22,6 +22,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('browser dashboard', () => {
+  it('opens preferences separately and reports blocked popups or unsupported exit', async () => {
+    const focus = vi.fn();
+    window.open = vi.fn().mockReturnValueOnce({ focus }).mockReturnValueOnce(null);
+    const { showSettings, quitApp } = await import('./api');
+    await showSettings();
+    expect(window.open).toHaveBeenCalledWith('#settings', 'agentbar-settings', 'popup,width=456,height=680');
+    expect(focus).toHaveBeenCalledOnce();
+    await expect(showSettings()).rejects.toThrow('被浏览器拦截');
+    await expect(quitApp()).rejects.toThrow('仅在桌面应用中可用');
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
   it('does not install native account refresh listeners in browser previews', async () => {
     const { subscribeToAccountStatisticsRefresh } = await import('./api');
     const refresh = vi.fn();
@@ -31,14 +43,13 @@ describe('browser dashboard', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('does not fabricate remote statistics or open an authenticated webpage in browser preview', async () => {
-    const { getCachedCodexAccountStatistics, getCodexAccountStatistics, openCodexUsageWeb } = await import('./api');
+  it('does not fabricate remote statistics in browser preview', async () => {
+    const { getCachedCodexAccountStatistics, getCodexAccountStatistics } = await import('./api');
     expect(await getCachedCodexAccountStatistics('oauth')).toBeNull();
     expect(await getCodexAccountStatistics('oauth')).toMatchObject({
       source: 'oauth', status: 'unavailable', account: null, accountId: null,
-      summary: { lifetimeTokens: null, peakDailyTokens: null }, dailyUsage: null, updatedAt: null, web: null,
+      summary: { lifetimeTokens: null, peakDailyTokens: null }, dailyUsage: null, updatedAt: null,
     });
-    await expect(openCodexUsageWeb()).rejects.toThrow('桌面应用');
     expect(native.invoke).not.toHaveBeenCalled();
   });
   it('shows unavailable providers without inventing account or usage data', async () => {
@@ -90,6 +101,16 @@ describe('browser dashboard', () => {
 describe('desktop dashboard', () => {
   const snapshot: DashboardSnapshot = { revision: 2, mode: 'live', providers: [], updatedAt: '2026-09-16T00:00:00Z' };
 
+  it('opens native preferences, propagates window failures, and exits through the app command', async () => {
+    native.desktop = true;
+    native.invoke.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('窗口打开失败')).mockResolvedValueOnce(undefined);
+    const { showSettings, quitApp } = await import('./api');
+    await showSettings();
+    await expect(showSettings()).rejects.toThrow('窗口打开失败');
+    await quitApp();
+    expect(native.invoke.mock.calls).toEqual([['open_settings'], ['open_settings'], ['quit_app']]);
+  });
+
   it('delivers explicit account statistics refreshes and releases the native listener', async () => {
     native.desktop = true;
     const unsubscribe = vi.fn();
@@ -119,14 +140,14 @@ describe('desktop dashboard', () => {
     ]);
   });
 
-  it('queries the selected server source and exposes webpage disabled errors', async () => {
+  it('queries the selected server source and propagates collection failures', async () => {
     native.desktop = true;
-    native.invoke.mockResolvedValueOnce({ source: 'pat', status: 'ready' }).mockRejectedValueOnce(new Error('网页补充尚未启用'));
-    const { getCodexAccountStatistics, openCodexUsageWeb } = await import('./api');
+    native.invoke.mockResolvedValueOnce({ source: 'pat', status: 'ready' }).mockRejectedValueOnce(new Error('服务端统计读取失败'));
+    const { getCodexAccountStatistics } = await import('./api');
     expect(await getCodexAccountStatistics('pat')).toEqual({ source: 'pat', status: 'ready' });
-    await expect(openCodexUsageWeb()).rejects.toThrow('尚未启用');
+    await expect(getCodexAccountStatistics('auto')).rejects.toThrow('服务端统计读取失败');
     expect(native.invoke.mock.calls).toEqual([
-      ['get_codex_account_statistics', { source: 'pat' }], ['open_codex_usage_web'],
+      ['get_codex_account_statistics', { source: 'pat' }], ['get_codex_account_statistics', { source: 'auto' }],
     ]);
   });
 

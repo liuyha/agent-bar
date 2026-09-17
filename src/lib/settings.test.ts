@@ -13,17 +13,17 @@ describe('settings contract', () => {
     expect(() => validateSettings({ ...defaultSettings(), enabledProviders: ['unknown'] })).toThrow();
     expect(() => validateSettings({ ...defaultSettings(), theme: 'unknown' })).toThrow();
   });
-  it('migrates older settings to local statistics with webpage extras off', () => {
+  it('migrates older settings to local statistics', () => {
     expect(validateSettings({ refreshIntervalSeconds: 300, enabledProviders: ['codex'], theme: 'system' }))
-      .toMatchObject({ codexStatisticsSource: 'local', codexWebExtras: false });
+      .toMatchObject({ codexStatisticsSource: 'local' });
   });
   it.each(['local', 'auto'])('preserves selected statistics source %s', (codexStatisticsSource) => {
-    expect(validateSettings({ ...defaultSettings(), codexStatisticsSource, codexWebExtras: true }))
-      .toMatchObject({ codexStatisticsSource, codexWebExtras: true });
+    expect(validateSettings({ ...defaultSettings(), codexStatisticsSource }))
+      .toMatchObject({ codexStatisticsSource });
   });
   it.each(['oauth', 'pat', 'cli'])('migrates legacy %s selection to automatic server selection', (codexStatisticsSource) => {
-    expect(validateSettings({ ...defaultSettings(), codexStatisticsSource, codexWebExtras: true }))
-      .toMatchObject({ codexStatisticsSource: 'auto', codexWebExtras: true });
+    expect(validateSettings({ ...defaultSettings(), codexStatisticsSource }))
+      .toMatchObject({ codexStatisticsSource: 'auto' });
   });
   it('offers only local records and the server', () => {
     expect(codexStatisticsSources).toEqual([
@@ -31,8 +31,11 @@ describe('settings contract', () => {
       { value: 'auto', label: '服务端' },
     ]);
   });
-  it('rejects unsupported sources and non-boolean webpage options', () => {
+  it('rejects unsupported sources', () => {
     expect(() => validateSettings({ ...defaultSettings(), codexStatisticsSource: 'web' })).toThrow('来源');
-    expect(() => validateSettings({ ...defaultSettings(), codexWebExtras: 'false' })).toThrow('开关');
+  });
+  it.each([true, false, 'false'])('discards removed webpage settings while preserving preferences: %s', (codexWebExtras) => {
+    const preferences = { ...defaultSettings(), codexStatisticsSource: 'auto', theme: 'dark', enabledProviders: ['codex'] };
+    expect(validateSettings({ ...preferences, codexWebExtras })).toEqual(preferences);
   });
 });

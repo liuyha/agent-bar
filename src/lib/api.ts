@@ -96,6 +96,21 @@ export async function hideSettings(): Promise<void> {
   if (isDesktop) await invoke('hide_settings');
 }
 
+export async function showSettings(): Promise<void> {
+  if (isDesktop) {
+    await invoke('open_settings');
+    return;
+  }
+  const settingsWindow = window.open('#settings', 'agentbar-settings', 'popup,width=456,height=680');
+  if (!settingsWindow) throw new Error('偏好设置窗口被浏览器拦截，请允许弹出窗口后重试。');
+  settingsWindow.focus();
+}
+
+export async function quitApp(): Promise<void> {
+  if (!isDesktop) throw new Error('退出功能仅在桌面应用中可用。');
+  await invoke('quit_app');
+}
+
 export async function getTokenStatistics(provider: ProviderId): Promise<TokenStatistics> {
   if (isDesktop) return invoke<TokenStatistics>('get_token_statistics', { provider });
   return {
@@ -117,16 +132,11 @@ export async function getCodexAccountStatistics(source: Exclude<CodexStatisticsS
     source, status: 'unavailable', message: '服务端使用统计仅在桌面应用中可用。',
     account: null, accountId: null,
     summary: { lifetimeTokens: null, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null },
-    dailyUsage: null, serviceUpdatedAt: null, updatedAt: null, web: null,
+    dailyUsage: null, serviceUpdatedAt: null, updatedAt: null,
   };
 }
 
 export async function getCachedCodexAccountStatistics(source: Exclude<CodexStatisticsSource, 'local'>): Promise<AccountUsageSnapshot | null> {
   if (isDesktop) return invoke<AccountUsageSnapshot | null>('get_cached_codex_account_statistics', { source });
   return null;
-}
-
-export async function openCodexUsageWeb(): Promise<void> {
-  if (!isDesktop) throw new Error('请在桌面应用中连接 Codex 用量网页。');
-  await invoke('open_codex_usage_web');
 }

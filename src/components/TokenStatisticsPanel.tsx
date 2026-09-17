@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useState, useSyncExternalStore } from 'react';
-import { AlertCircle, ChartNoAxesCombined, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, ChartNoAxesCombined, LoaderCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { NativeSelect } from '@/components/ui/native-select';
 import { getStatisticsState, refreshStatistics, subscribeToStatistics } from '../lib/tokenStatistics';
 import { formatCount, formatPeriodRange, formatTime, formatTokens, formatUsd } from '../lib/format';
@@ -40,15 +39,18 @@ export function StatisticsContent({ statistics, loading, error, selectedPeriod =
         {period.unpricedTokens > 0 && <p className="unpriced-note"><span title={formatCount(period.unpricedTokens)}>{formatTokens(period.unpricedTokens)}</span> Token 缺少可核实单价。{period.estimatedCostUsd === null ? '暂无法估算金额。' : '金额仅含已计价部分。'}</p>}
       </section> : <div className="statistics-state" role="status"><p>暂无{periodLabels[selectedPeriod]}统计数据。</p></div>}
     </div>
-    <p className="statistics-footnote">本地时区 · 周一为每周起点，本年从 1 月 1 日起，全部涵盖本机保留的所有历史记录。请求数按可识别模型调用去重，会话轮次按用户发起的交互统计；缺失数据以 — 表示。仅含本机记录，可能包含多个账号。金额按公开 API 标准单价估算，不代表订阅账单或实际扣费。</p>
     <div className="statistics-updated">统计于 {formatTime(statistics.updatedAt)}</div>
   </>;
 }
 
-function LocalStatisticsView({ provider, refreshKey }: { provider: ProviderId; refreshKey: string }) {
+function useLocalStatisticsState(provider: ProviderId) {
   const subscribe = useCallback((listener: () => void) => subscribeToStatistics(provider, listener), [provider]);
   const getSnapshot = useCallback(() => getStatisticsState(provider), [provider]);
-  const { statistics, loading, error } = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+function LocalStatisticsView({ provider, refreshKey }: { provider: ProviderId; refreshKey: string }) {
+  const { statistics, loading, error } = useLocalStatisticsState(provider);
   const [attempt, setAttempt] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState<TokenPeriod['period']>('day');
 
@@ -59,38 +61,40 @@ function LocalStatisticsView({ provider, refreshKey }: { provider: ProviderId; r
   return <StatisticsContent statistics={statistics} loading={loading} error={error} selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} onRetry={() => setAttempt((value) => value + 1)} />;
 }
 
-type StatisticsPreferences = Pick<AppSettings, 'codexStatisticsSource' | 'codexWebExtras'>;
+type StatisticsPreferences = Pick<AppSettings, 'codexStatisticsSource'>;
 
-export function TokenStatisticsPanel({ provider, name, refreshKey, accountStatisticsStore, account, settings, saving = false, onPreferencesChange, onClose }: {
+export function TokenStatisticsPanel({ provider, name, refreshKey, accountStatisticsStore, account, settings, saving = false, onPreferencesChange }: {
   provider: ProviderId; name: string; refreshKey: string; account: string | null; settings: AppSettings;
-  saving?: boolean; accountStatisticsStore: ReturnType<typeof createAccountStatisticsStore>; onPreferencesChange: (patch: StatisticsPreferences) => Promise<void>; onClose: () => void;
+  saving?: boolean; accountStatisticsStore: ReturnType<typeof createAccountStatisticsStore>; onPreferencesChange: (patch: StatisticsPreferences) => Promise<void>;
 }) {
   const sourceId = useId();
-  const webExtrasId = useId();
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const source = provider === 'codex' ? settings.codexStatisticsSource : 'local';
+  const localState = useLocalStatisticsState(provider);
+  const serverState = useSyncExternalStore(accountStatisticsStore.subscribe, accountStatisticsStore.getSnapshot, accountStatisticsStore.getSnapshot);
+  const loading = source === 'local' ? localState.loading : serverState.loading;
+  const refreshing = source === 'local' ? localState.loading : serverState.refreshing;
+  const refreshLabel = source === 'local' ? '刷新本机统计' : '刷新服务端统计';
   async function updatePreferences(patch: Partial<StatisticsPreferences>) {
     setSettingsError(null);
-    try { await onPreferencesChange({ codexStatisticsSource: settings.codexStatisticsSource, codexWebExtras: settings.codexWebExtras, ...patch }); }
+    try { await onPreferencesChange({ codexStatisticsSource: settings.codexStatisticsSource, ...patch }); }
     catch (reason) { setSettingsError(`保存失败：${reason instanceof Error ? reason.message : String(reason)}`); }
   }
   return <aside className={`token-statistics provider-${provider}`} id="token-statistics" aria-label={`${name} 使用统计`}>
-    <div className="statistics-header"><div><ChartNoAxesCombined size={16} aria-hidden="true" /><h2>{name} 使用统计</h2></div><Button type="button" variant="ghost" size="icon" aria-label="收起 Token 统计" onClick={onClose}><X size={14} /></Button></div>
-    {provider === 'codex' && <div className="mb-3 border-0 border-b border-solid border-[var(--line)] pb-2.5">
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <label htmlFor={sourceId} className="text-[10px] text-[var(--secondary)]">统计来源</label>
-        <NativeSelect id={sourceId} value={source} disabled={saving} wrapperClassName="max-w-[70%]" className="h-auto rounded-[5px] bg-[var(--card-bg)] py-[5px] pl-1.5 text-[10px]" onChange={(event) => { void updatePreferences({ codexStatisticsSource: event.target.value as CodexStatisticsPreference }); }}>
+    <div className="statistics-header">
+      <div className="statistics-title"><ChartNoAxesCombined size={16} aria-hidden="true" /><h2>{name} 使用统计</h2></div>
+      {provider === 'codex' && <div className="statistics-source-control">
+        <label htmlFor={sourceId}>统计来源</label>
+        <NativeSelect id={sourceId} value={source} disabled={saving} wrapperClassName="w-[76px] shrink-0" className="h-auto rounded-[5px] bg-[var(--card-bg)] py-[5px] pl-1.5 text-[10px]" onChange={(event) => { void updatePreferences({ codexStatisticsSource: event.target.value as CodexStatisticsPreference }); }}>
           {codexStatisticsSources.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
         </NativeSelect>
-      </div>
-      <label htmlFor={webExtrasId} className={`mt-[9px] flex items-center gap-1.5 text-[10px] text-[var(--secondary)] ${saving ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-        <Checkbox id={webExtrasId} checked={settings.codexWebExtras} disabled={saving} onCheckedChange={(checked) => { void updatePreferences({ codexWebExtras: checked === true }); }} />
-        <span>启用网页补充</span><small className="text-[9px] text-[var(--muted)]">可选</small>
-      </label>
-      {settings.codexWebExtras && source === 'local' && <p className="statistics-footnote">选择服务端来源后，可连接网页查看补充数据。</p>}
+      </div>}
+      <Button variant="outline" size="icon" type="button" aria-label={refreshLabel} aria-busy={refreshing} title={refreshing && !loading ? '后台刷新中，点击显示加载状态' : refreshLabel} disabled={loading} onClick={() => { void (source === 'local' ? refreshStatistics(provider) : accountStatisticsStore.refresh(source, 'manual')); }}><RefreshCw size={13} className={refreshing ? 'spin' : undefined} /></Button>
+    </div>
+    {provider === 'codex' && <>
       {saving && <p className="statistics-footnote" role="status">正在保存统计设置…</p>}
       {settingsError && <p className="statistics-notice" role="alert">{settingsError}</p>}
-    </div>}
-    {source === 'local' ? <LocalStatisticsView provider={provider} refreshKey={refreshKey} /> : <AccountStatisticsView key={`${source}:${account ?? ''}:${settings.codexWebExtras}`} source={source} webEnabled={settings.codexWebExtras} store={accountStatisticsStore} />}
+    </>}
+    {source === 'local' ? <LocalStatisticsView provider={provider} refreshKey={refreshKey} /> : <AccountStatisticsView key={`${source}:${account ?? ''}`} source={source} store={accountStatisticsStore} />}
   </aside>;
 }

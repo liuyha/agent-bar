@@ -8,7 +8,6 @@ export interface AppSettings {
   enabledProviders: ProviderId[];
   theme: Theme;
   codexStatisticsSource: CodexStatisticsPreference;
-  codexWebExtras: boolean;
 }
 
 export interface UsageWindow {
@@ -73,18 +72,5 @@ export interface AccountUsageSnapshot {
   };
   dailyUsage: { date: string; tokens: number }[] | null;
   serviceUpdatedAt: string | null;
-  updatedAt: string | null;
-  web: WebUsageSnapshot | null;
-}
-
-export interface WebUsageSnapshot {
-  status: 'ready' | 'unavailable' | 'error';
-  message: string | null;
-  account: string | null;
-  creditsRemaining: number | null;
-  codeReviewRemainingPercent: number | null;
-  usageUnit: string | null;
-  usageBreakdown: { date: string; amounts: { service: string; amount: number }[] }[] | null;
-  creditEvents: { date: string; service: string; credits: number }[] | null;
   updatedAt: string | null;
 }

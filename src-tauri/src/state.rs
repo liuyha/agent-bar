@@ -552,7 +552,6 @@ mod tests {
             enabled_providers: vec![ProviderId::Claude],
             theme: Theme::Dark,
             codex_statistics_source: crate::models::CodexStatisticsSource::Auto,
-            codex_web_extras: true,
         };
         assert_eq!(state.save_settings(settings.clone()).unwrap(), settings);
         assert_eq!(

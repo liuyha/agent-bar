@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertCircle, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, LoaderCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   getDashboard, getSettings, saveSettings, subscribeToSettings,
@@ -188,7 +188,7 @@ export default function StatisticsWindow() {
     };
   }, [closeStatistics, panel.side, reportInteraction]);
 
-  async function savePreferences(patch: Pick<AppSettings, 'codexStatisticsSource' | 'codexWebExtras'>) {
+  async function savePreferences(patch: Pick<AppSettings, 'codexStatisticsSource'>) {
     if (saveLock.current) throw new Error('设置正在保存，请稍后重试。');
     saveLock.current = true;
     setSaving(true);
@@ -216,8 +216,8 @@ export default function StatisticsWindow() {
       {selected && settings ? <TokenStatisticsPanel key={selected.id} provider={selected.id} name={selected.name}
         account={selected.account} settings={settings} saving={saving} accountStatisticsStore={store}
         refreshKey={`${JSON.stringify(selected)}:${refreshes[selected.id] ?? 0}`}
-        onPreferencesChange={savePreferences} onClose={closeStatistics} />
-        : <aside className="token-statistics" aria-label="使用统计"><div className="statistics-header"><h2>{panel.provider === 'codex' ? 'Codex' : 'Claude'} 使用统计</h2><Button type="button" variant="ghost" size="icon" aria-label="收起 Token 统计" onClick={closeStatistics}><X size={14} /></Button></div><div className="statistics-state" role="status"><LoaderCircle size={22} className="spin" /><p>正在读取使用统计…</p></div></aside>}
+        onPreferencesChange={savePreferences} />
+        : <aside className="token-statistics" aria-label="使用统计"><div className="statistics-header"><h2>{panel.provider === 'codex' ? 'Codex' : 'Claude'} 使用统计</h2></div><div className="statistics-state" role="status"><LoaderCircle size={22} className="spin" /><p>正在读取使用统计…</p></div></aside>}
     </>}
     </div>
   </div>;

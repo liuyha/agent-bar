@@ -3,7 +3,7 @@ import type { AccountUsageSnapshot } from '../types';
 import { createAccountStatisticsStore, formatDuration } from './accountStatistics';
 
 function result(source: AccountUsageSnapshot['source'] = 'oauth', account = 'first'): AccountUsageSnapshot {
-  return { source, status: 'ready', message: null, account, accountId: null, summary: { lifetimeTokens: 123, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null }, dailyUsage: null, serviceUpdatedAt: null, updatedAt: null, web: null };
+  return { source, status: 'ready', message: null, account, accountId: null, summary: { lifetimeTokens: 123, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null }, dailyUsage: null, serviceUpdatedAt: null, updatedAt: null };
 }
 
 function deferred<T>() {

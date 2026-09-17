@@ -1,7 +1,9 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { StatisticsContent } from './TokenStatisticsPanel';
+import { StatisticsContent, TokenStatisticsPanel } from './TokenStatisticsPanel';
+import { createAccountStatisticsStore } from '../lib/accountStatistics';
+import { defaultSettings } from '../lib/settings';
 import type { TokenPeriod, TokenStatistics } from '../types';
 
 const statistics: TokenStatistics = {
@@ -18,6 +20,29 @@ function render(data: TokenStatistics | null = statistics, loading = false, erro
 }
 
 describe('token statistics', () => {
+  it.each(['background', 'manual'] as const)('preserves the server refresh button state in the header during %s refresh', async (mode) => {
+    const store = createAccountStatisticsStore();
+    const pending = store.refresh('auto', mode);
+    try {
+      const html = renderToStaticMarkup(createElement(TokenStatisticsPanel, {
+        provider: 'codex', name: 'Codex', refreshKey: '', account: null,
+        settings: { ...defaultSettings(), codexStatisticsSource: 'auto' },
+        accountStatisticsStore: store, onPreferencesChange: async () => {},
+      }));
+      const header = html.match(/<div class="statistics-header">([^]*?)<\/button><\/div>/)?.[0];
+      expect(header).toBeDefined();
+      expect(header).toContain('统计来源');
+      expect(header).toMatch(/<button[^>]*aria-label="刷新服务端统计"[^>]*aria-busy="true"[^>]*>[^]*?<svg[^>]*class="[^"]*spin/);
+      const button = header?.match(/<button[^>]*aria-label="刷新服务端统计"[^>]*>/)?.[0];
+      // Tailwind's disabled: utility classes do not make the button disabled.
+      if (mode === 'manual') expect(button).toMatch(/\sdisabled(?:=|\s|>)/);
+      else expect(button).not.toMatch(/\sdisabled(?:=|\s|>)/);
+    } finally {
+      store.cancel();
+      await pending;
+    }
+  });
+
   it('compacts every token field with exact titles while leaving requests and turns unabridged', () => {
     const html = render({ ...statistics, periods: [{
       ...statistics.periods[0], totalTokens: 1234567890, inputTokens: 1234567,
@@ -35,7 +60,7 @@ describe('token statistics', () => {
 
   it('defaults to today with a five-option period selector and one statistics section', () => {
     const html = render();
-    for (const label of ['今日', '本周', '本月', '本年', '全部', '1.5K', 'US$0.05', '请求数', '会话轮次', '缓存读取', '缓存写入', '不代表订阅账单']) expect(html).toContain(label);
+    for (const label of ['今日', '本周', '本月', '本年', '全部', '1.5K', 'US$0.05', '请求数', '会话轮次', '缓存读取', '缓存写入']) expect(html).toContain(label);
     expect(html).toContain('role="radiogroup" aria-label="统计时段"');
     expect(html.match(/type="radio"/g)).toHaveLength(5);
     expect([...html.matchAll(/<input[^>]*value="([^"]+)"/g)].map((match) => match[1])).toEqual(['day', 'week', 'month', 'year', 'all']);

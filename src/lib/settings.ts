@@ -8,7 +8,7 @@ export const codexStatisticsSources: { value: CodexStatisticsPreference; label: 
 ];
 
 export function defaultSettings(): AppSettings {
-  return { refreshIntervalSeconds: 300, enabledProviders: ['codex', 'claude'], theme: 'system', codexStatisticsSource: 'local', codexWebExtras: false };
+  return { refreshIntervalSeconds: 300, enabledProviders: ['codex', 'claude'], theme: 'system', codexStatisticsSource: 'local' };
 }
 
 export function validateSettings(value: unknown): AppSettings {
@@ -26,14 +26,11 @@ export function validateSettings(value: unknown): AppSettings {
   }
   const savedSource = data.codexStatisticsSource === undefined ? 'local' : data.codexStatisticsSource;
   const codexStatisticsSource = ['oauth', 'pat', 'cli'].includes(savedSource as string) ? 'auto' : savedSource;
-  const codexWebExtras = data.codexWebExtras === undefined ? false : data.codexWebExtras;
   if (!codexStatisticsSources.some(({ value }) => value === codexStatisticsSource)) throw new Error('不支持的 Codex 统计来源');
-  if (typeof codexWebExtras !== 'boolean') throw new Error('网页补充设置必须为开关');
   return {
     refreshIntervalSeconds: data.refreshIntervalSeconds as number,
     enabledProviders: [...new Set(data.enabledProviders)] as ProviderId[],
     theme: data.theme,
     codexStatisticsSource: codexStatisticsSource as CodexStatisticsPreference,
-    codexWebExtras,
   };
 }

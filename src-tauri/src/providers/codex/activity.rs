@@ -433,7 +433,6 @@ fn map_stats(
         daily_usage,
         service_updated_at: None,
         updated_at: Some(now.to_rfc3339_opts(SecondsFormat::Secs, true)),
-        web: None,
     })
 }
 
@@ -467,7 +466,6 @@ fn empty_snapshot(
         daily_usage: None,
         service_updated_at: None,
         updated_at: None,
-        web: None,
     }
 }
 

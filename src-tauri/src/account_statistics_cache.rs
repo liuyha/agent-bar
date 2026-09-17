@@ -45,16 +45,13 @@ impl RequestOrder {
         source: CodexStatisticsSource,
         scope: Option<&str>,
         mut snapshot: AccountUsageSnapshot,
-        validate_current: impl Fn() -> Result<bool, String>,
+        validate_current: impl Fn() -> Result<(), String>,
     ) -> Result<AccountUsageSnapshot, String> {
         let latest = self.0.lock().map_err(|_| "统计请求状态不可用")?;
         if ticket != *latest {
             return Err(SUPERSEDED.into());
         }
-        let web_enabled = validate_current()?;
-        if !web_enabled {
-            snapshot.web = None;
-        }
+        validate_current()?;
         if snapshot.status != ProviderStatus::Ready {
             return Ok(snapshot);
         }
@@ -67,16 +64,6 @@ impl RequestOrder {
             return Ok(snapshot);
         };
 
-        // A transient web login/error hint may be shown for the live request,
-        // but only normalized successful web data is written to disk.
-        let transient_web = snapshot
-            .web
-            .as_ref()
-            .filter(|web| web.status != ProviderStatus::Ready)
-            .cloned();
-        snapshot.web = snapshot
-            .web
-            .filter(|web| web.status == ProviderStatus::Ready);
         storage::write_json(
             &directory.join(FILE_NAME),
             &Envelope {
@@ -86,16 +73,9 @@ impl RequestOrder {
                 snapshot,
             },
         )?;
-        let mut restored = read_cached(directory, source, Some(scope), web_enabled)?
+        let restored = read_cached(directory, source, Some(scope))?
             .ok_or("无法确认服务端统计缓存已保存，请重试")?;
-        let web_enabled = validate_current()?;
-        if web_enabled {
-            if transient_web.is_some() {
-                restored.web = transient_web;
-            }
-        } else {
-            restored.web = None;
-        }
+        validate_current()?;
         Ok(restored)
     }
 }
@@ -106,7 +86,6 @@ pub(crate) fn read_cached(
     directory: &Path,
     source: CodexStatisticsSource,
     scope: Option<&str>,
-    web_enabled: bool,
 ) -> Result<Option<AccountUsageSnapshot>, String> {
     let Some(scope) = scope else {
         return Ok(None);
@@ -122,17 +101,13 @@ pub(crate) fn read_cached(
     {
         return Ok(None);
     }
-    let mut snapshot = envelope.snapshot;
-    snapshot.web = snapshot
-        .web
-        .filter(|web| web_enabled && web.status == ProviderStatus::Ready);
-    Ok(Some(snapshot))
+    Ok(Some(envelope.snapshot))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account_statistics::{AccountUsageSummary, WebUsageSnapshot};
+    use crate::account_statistics::AccountUsageSummary;
     use std::{cell::Cell, fs};
 
     const SOURCE: CodexStatisticsSource = CodexStatisticsSource::Auto;
@@ -152,21 +127,6 @@ mod tests {
             daily_usage: None,
             service_updated_at: None,
             updated_at: Some("2026-09-17T00:00:00Z".into()),
-            web: None,
-        }
-    }
-
-    fn web(status: ProviderStatus) -> WebUsageSnapshot {
-        WebUsageSnapshot {
-            status,
-            message: Some("synthetic-web-status".into()),
-            account: Some("synthetic@example.test".into()),
-            credits_remaining: Some(12.0),
-            code_review_remaining_percent: None,
-            usage_unit: None,
-            usage_breakdown: None,
-            credit_events: None,
-            updated_at: None,
         }
     }
 
@@ -178,7 +138,7 @@ mod tests {
                 SOURCE,
                 Some(SCOPE),
                 snapshot,
-                || Ok(true),
+                || Ok(()),
             )
             .unwrap();
     }
@@ -190,7 +150,7 @@ mod tests {
         let order = RequestOrder(Mutex::new(0));
         save(&order, &directory, ready(41));
         drop(order);
-        let restored = read_cached(&directory, SOURCE, Some(SCOPE), false)
+        let restored = read_cached(&directory, SOURCE, Some(SCOPE))
             .unwrap()
             .unwrap();
         assert_eq!(restored.summary.lifetime_tokens, Some(41));
@@ -198,7 +158,7 @@ mod tests {
         let next_instance = RequestOrder(Mutex::new(0));
         save(&next_instance, &directory, ready(42));
         assert_eq!(
-            read_cached(&directory, SOURCE, Some(SCOPE), false)
+            read_cached(&directory, SOURCE, Some(SCOPE))
                 .unwrap()
                 .unwrap()
                 .summary
@@ -226,7 +186,7 @@ mod tests {
     #[test]
     fn reads_are_disk_only_and_missing_corrupt_or_foreign_caches_are_misses() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
+        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE))
             .unwrap()
             .is_none());
         // A read never creates a directory/file or starts collection.
@@ -235,24 +195,21 @@ mod tests {
         save(&order, directory.path(), ready(41));
         let original = fs::read(directory.path().join(FILE_NAME)).unwrap();
         for scope in [None, Some("different-account")] {
-            assert!(read_cached(directory.path(), SOURCE, scope, true)
+            assert!(read_cached(directory.path(), SOURCE, scope)
                 .unwrap()
                 .is_none());
         }
-        assert!(read_cached(
-            directory.path(),
-            CodexStatisticsSource::Cli,
-            Some(SCOPE),
-            true
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            read_cached(directory.path(), CodexStatisticsSource::Cli, Some(SCOPE),)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             fs::read(directory.path().join(FILE_NAME)).unwrap(),
             original
         );
         fs::write(directory.path().join(FILE_NAME), b"{broken").unwrap();
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
+        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE))
             .unwrap()
             .is_none());
         assert_eq!(
@@ -277,7 +234,7 @@ mod tests {
                     SOURCE,
                     Some(SCOPE),
                     snapshot,
-                    || Ok(true),
+                    || Ok(()),
                 )
                 .unwrap();
             assert_eq!(result.status, status);
@@ -299,19 +256,19 @@ mod tests {
             snapshot: ready(41),
         };
         storage::write_json(&path, &envelope).unwrap();
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
+        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE))
             .unwrap()
             .is_none());
         envelope.version = VERSION;
         envelope.snapshot.status = ProviderStatus::Error;
         storage::write_json(&path, &envelope).unwrap();
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
+        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE))
             .unwrap()
             .is_none());
         envelope.snapshot.status = ProviderStatus::Ready;
         envelope.snapshot.source = CodexStatisticsSource::Local;
         storage::write_json(&path, &envelope).unwrap();
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
+        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE))
             .unwrap()
             .is_none());
     }
@@ -330,7 +287,7 @@ mod tests {
                 SOURCE,
                 Some(SCOPE),
                 ready(41),
-                || Ok(true)
+                || Ok(())
             )
             .is_err());
         assert_eq!(
@@ -341,60 +298,40 @@ mod tests {
     }
 
     #[test]
-    fn web_cache_requires_success_and_respects_the_current_switch() {
+    fn legacy_web_cache_is_readable_but_removed_data_is_not_returned_or_saved() {
         let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
         let order = RequestOrder(Mutex::new(0));
-        let mut snapshot = ready(41);
-        snapshot.web = Some(web(ProviderStatus::Ready));
-        save(&order, directory.path(), snapshot.clone());
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), false)
-            .unwrap()
-            .unwrap()
-            .web
-            .is_none());
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
-            .unwrap()
-            .unwrap()
-            .web
-            .is_some());
-        for status in [ProviderStatus::Error, ProviderStatus::Unavailable] {
-            snapshot.web = Some(web(status));
-            let result = order
-                .finish(
-                    order.begin().unwrap(),
-                    directory.path(),
-                    SOURCE,
-                    Some(SCOPE),
-                    snapshot.clone(),
-                    || Ok(true),
-                )
+        let mut legacy = serde_json::to_value(Envelope {
+            version: VERSION,
+            scope: SCOPE.into(),
+            requested_source: SOURCE,
+            snapshot: ready(41),
+        })
+        .unwrap();
+        for web in [
+            serde_json::json!({"status":"ready", "creditsRemaining":12}),
+            serde_json::json!({"status":"error", "message":"legacy-web-data"}),
+            serde_json::json!("obsolete-format"),
+        ] {
+            legacy["snapshot"]["web"] = web;
+            storage::write_json(&path, &legacy).unwrap();
+            let original = fs::read(&path).unwrap();
+            let restored = read_cached(directory.path(), SOURCE, Some(SCOPE))
+                .unwrap()
                 .unwrap();
-            assert_eq!(result.web.unwrap().status, status);
-            assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
+            assert_eq!(restored.summary.lifetime_tokens, Some(41));
+            assert_eq!(restored.account_id.as_deref(), Some("synthetic-account-a"));
+            assert!(serde_json::to_value(&restored)
                 .unwrap()
-                .unwrap()
-                .web
+                .get("web")
                 .is_none());
-            assert!(!fs::read_to_string(directory.path().join(FILE_NAME))
-                .unwrap()
-                .contains("synthetic-web-status"));
+            assert_eq!(fs::read(&path).unwrap(), original);
+
+            save(&order, directory.path(), restored);
+            let saved: serde_json::Value = storage::read_json(&path).unwrap().unwrap();
+            assert!(saved["snapshot"].get("web").is_none());
         }
-        snapshot.web = Some(web(ProviderStatus::Ready));
-        order
-            .finish(
-                order.begin().unwrap(),
-                directory.path(),
-                SOURCE,
-                Some(SCOPE),
-                snapshot,
-                || Ok(false),
-            )
-            .unwrap();
-        assert!(read_cached(directory.path(), SOURCE, Some(SCOPE), true)
-            .unwrap()
-            .unwrap()
-            .web
-            .is_none());
     }
 
     #[test]
@@ -410,7 +347,7 @@ mod tests {
                 SOURCE,
                 Some(SCOPE),
                 ready(42),
-                || Ok(true),
+                || Ok(()),
             )
             .unwrap();
         assert_eq!(
@@ -421,13 +358,13 @@ mod tests {
                     SOURCE,
                     Some(SCOPE),
                     ready(41),
-                    || Ok(true)
+                    || Ok(())
                 )
                 .unwrap_err(),
             SUPERSEDED
         );
         assert_eq!(
-            read_cached(directory.path(), SOURCE, Some(SCOPE), false)
+            read_cached(directory.path(), SOURCE, Some(SCOPE))
                 .unwrap()
                 .unwrap()
                 .summary
@@ -440,7 +377,7 @@ mod tests {
         failed.status = ProviderStatus::Error;
         order
             .finish(newer, directory.path(), SOURCE, Some(SCOPE), failed, || {
-                Ok(true)
+                Ok(())
             })
             .unwrap();
         assert!(order
@@ -450,11 +387,11 @@ mod tests {
                 SOURCE,
                 Some(SCOPE),
                 ready(43),
-                || Ok(true)
+                || Ok(())
             )
             .is_err());
         assert_eq!(
-            read_cached(directory.path(), SOURCE, Some(SCOPE), false)
+            read_cached(directory.path(), SOURCE, Some(SCOPE))
                 .unwrap()
                 .unwrap()
                 .summary
@@ -496,17 +433,15 @@ mod tests {
                     if calls.get() > 1 {
                         Err("scope changed after write".into())
                     } else {
-                        Ok(true)
+                        Ok(())
                     }
                 }
             )
             .is_err());
         assert_eq!(calls.get(), 2);
-        assert!(
-            read_cached(directory.path(), SOURCE, Some("new-scope"), true)
-                .unwrap()
-                .is_none()
-        );
+        assert!(read_cached(directory.path(), SOURCE, Some("new-scope"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -525,7 +460,7 @@ mod tests {
                 SOURCE,
                 None,
                 snapshot,
-                || Ok(true),
+                || Ok(()),
             )
             .unwrap();
         assert_eq!(result.status, ProviderStatus::Ready);
@@ -535,7 +470,7 @@ mod tests {
             fs::read(directory.path().join(FILE_NAME)).unwrap(),
             original
         );
-        assert!(read_cached(directory.path(), SOURCE, None, true)
+        assert!(read_cached(directory.path(), SOURCE, None)
             .unwrap()
             .is_none());
     }

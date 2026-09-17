@@ -20,7 +20,7 @@ export function useAccountStatistics(
     if (!remoteEnabled) return;
     void store.initialize('auto');
     return store.cancel;
-  }, [store, remoteEnabled, account, settings?.codexWebExtras]);
+  }, [store, remoteEnabled, account]);
 
   useEffect(() => {
     if (!remoteEnabled || !intervalSeconds) return;

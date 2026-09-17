@@ -1,28 +1,20 @@
-.account-statistics-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; margin-bottom: 9px; }
-.statistics-source-badge { color: var(--secondary); font-size: 9px; }
-.statistics-account { margin: 6px 0; color: var(--secondary); font-size: 9px; overflow-wrap: anywhere; }
+.statistics-title { min-width: 0; }
+.statistics-title > svg { flex-shrink: 0; }
+.statistics-title > h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statistics-source-control { display: flex; flex-shrink: 0; align-items: center; gap: 6px; min-width: 0; margin-left: auto; color: var(--secondary); font-size: 10px; }
+.statistics-source-control > label { white-space: nowrap; }
 .account-statistics-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card-bg); }
 .account-statistics-metrics dt { font-size: 9px; color: var(--secondary); }
 .account-statistics-metrics dd { margin: 6px 0 0; font-size: 15px; font-weight: 620; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .account-statistics-metrics > div:nth-child(n + 3) dd { font-size: 12px; }
 .account-period-metrics { margin: 0 0 14px; padding: 0; border: 0; background: none; }
 .account-activity-metrics dd { font-size: 12px; }
-.account-daily-statistics h3, .web-statistics h3 { margin: 0; font-size: 11px; font-weight: 620; }
+.account-daily-statistics h3 { margin: 0; font-size: 11px; font-weight: 620; }
 .account-daily-list { display: grid; gap: 9px; max-height: 185px; overflow-y: auto; margin: 12px 0; padding: 0; list-style: none; }
 .account-daily-list li { display: grid; grid-template-columns: minmax(70px, auto) minmax(0, 1fr) minmax(35px, auto); align-items: center; gap: 7px; font-size: 9px; font-variant-numeric: tabular-nums; }
 .account-daily-list time { color: var(--secondary); overflow-wrap: anywhere; }
 .account-daily-list li > span:last-child { text-align: right; }
 .account-daily-bar { height: 5px; border-radius: 5px; background: var(--track); overflow: hidden; }
 .account-daily-bar i { display: block; height: 100%; background: var(--text); opacity: .55; border-radius: inherit; }
-.web-statistics { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
-.web-statistics-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
-.web-statistics-metrics dd { font-size: 13px; }
 .account-statistics-details { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 9px; }
 .account-statistics-details summary { color: var(--secondary); font-size: 10px; overflow-wrap: anywhere; cursor: pointer; }
-.web-statistics-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
-.web-statistics-list li { margin-bottom: 10px; font-size: 9px; color: var(--secondary); overflow-wrap: anywhere; }
-.web-statistics-list time { color: var(--muted); }
-.web-statistics-list dl { display: grid; gap: 4px; margin: 5px 0 0; }
-.web-statistics-list dl > div { display: flex; justify-content: space-between; gap: 8px; }
-.web-statistics-list dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.web-statistics-list small { color: var(--muted); }

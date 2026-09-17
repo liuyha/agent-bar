@@ -10,9 +10,11 @@ use tauri::{AppHandle, Emitter, Manager, Rect, WebviewUrl, WebviewWindow, Webvie
 use crate::models::ProviderId;
 
 pub const TRAY_ID: &str = "agentbar-tray";
-const PANEL_WIDTH: f64 = 360.0;
+const PANEL_WIDTH: f64 = 320.0;
+const MENU_BAR_GAP: f64 = 1.0;
 // Only used before the webview has supplied its first content measurement.
 const INITIAL_PANEL_HEIGHT: f64 = 600.0;
+const STATISTICS_WIDTH: f64 = 360.0;
 const STATISTICS_MIN_WIDTH: f64 = 280.0;
 const STATISTICS_LABEL: &str = "statistics";
 const STATISTICS_EVENT: &str = "statistics-panel-changed";
@@ -355,10 +357,11 @@ fn settings_placement(
 // The nearest work-area edge also handles an auto-hidden taskbar inside the screen.
 fn placement(work: Bounds, anchor: Option<Bounds>, scale: f64, content_height: f64) -> Bounds {
     let margin = (6.0 * scale).min(work.width / 4.0).min(work.height / 4.0);
+    let top_margin = (MENU_BAR_GAP * scale).min(work.height / 4.0);
     let gap = 4.0 * scale;
     let width = (PANEL_WIDTH * scale).min(work.width - margin * 2.0);
-    let height = fitted_height(content_height, scale, work.height - margin * 2.0);
-    let (mut x, mut y) = (work.x + work.width - width - margin, work.y + margin);
+    let height = fitted_height(content_height, scale, work.height - top_margin - margin);
+    let (mut x, mut y) = (work.x + work.width - width - margin, work.y + top_margin);
 
     if let Some(tray) = anchor {
         let cx = tray.x + tray.width / 2.0;
@@ -378,7 +381,7 @@ fn placement(work: Bounds, anchor: Option<Bounds>, scale: f64, content_height: f
         x = cx - width / 2.0;
         y = cy - height / 2.0;
         match edge {
-            0 => y = tray.y + tray.height + gap,
+            0 => y = (tray.y + tray.height).max(work.y) + top_margin,
             1 => y = tray.y - height - gap,
             2 => x = tray.x + tray.width + gap,
             _ => x = tray.x - width - gap,
@@ -387,24 +390,24 @@ fn placement(work: Bounds, anchor: Option<Bounds>, scale: f64, content_height: f
 
     Bounds {
         x: x.clamp(work.x + margin, work.x + work.width - width - margin),
-        y: y.clamp(work.y + margin, work.y + work.height - height - margin),
+        y: y.clamp(work.y + top_margin, work.y + work.height - height - margin),
         width,
         height,
     }
 }
 
 // Use Cocoa points on macOS and physical pixels elsewhere, matching the main
-// panel. The primary panel never moves when the companion changes sides.
+// panel. Keep their top edges aligned even when the companion needs scrolling.
+// The primary panel never moves when the companion changes sides.
 fn statistics_placement(
     work: Bounds,
     main: Bounds,
     scale: f64,
-    anchor_y: f64,
     content_height: f64,
 ) -> (Bounds, StatisticsSide) {
     let margin = (6.0 * scale).min(work.width / 4.0).min(work.height / 4.0);
     let gap = 4.0 * scale;
-    let desired_width = (PANEL_WIDTH * scale).min(work.width - margin * 2.0);
+    let desired_width = (STATISTICS_WIDTH * scale).min(work.width - margin * 2.0);
     let min_width = STATISTICS_MIN_WIDTH * scale;
     let right_space = (work.x + work.width - margin - main.x - main.width - gap).max(0.0);
     let left_space = (main.x - gap - work.x - margin).max(0.0);
@@ -429,12 +432,11 @@ fn statistics_placement(
     } else {
         desired_width
     };
-    let height = fitted_height(content_height, scale, work.height - margin * 2.0);
-    let anchor_y = if anchor_y.is_finite() {
-        anchor_y.clamp(0.0, main.height / scale)
-    } else {
-        0.0
-    };
+    let height = fitted_height(
+        content_height,
+        scale,
+        work.y + work.height - margin - main.y,
+    );
     let x = match side {
         StatisticsSide::Right => main.x + main.width + gap,
         StatisticsSide::Left => main.x - width - gap,
@@ -442,8 +444,7 @@ fn statistics_placement(
     (
         Bounds {
             x: x.clamp(work.x + margin, work.x + work.width - width - margin),
-            y: (main.y + anchor_y * scale)
-                .clamp(work.y + margin, work.y + work.height - height - margin),
+            y: main.y,
             width,
             height,
         },
@@ -581,7 +582,7 @@ pub fn initialize(app: &AppHandle) -> tauri::Result<()> {
         WebviewUrl::App("index.html#statistics".into()),
     )
     .title("AgentBar · 使用统计")
-    .inner_size(PANEL_WIDTH, INITIAL_PANEL_HEIGHT)
+    .inner_size(STATISTICS_WIDTH, INITIAL_PANEL_HEIGHT)
     .resizable(false)
     .decorations(false)
     .minimizable(false)
@@ -718,7 +719,6 @@ pub fn resize_content_window(
             geometry.work,
             geometry.collapsed,
             geometry.scale,
-            anchor.y,
             runtime.statistics_height.unwrap_or(INITIAL_PANEL_HEIGHT),
         );
         // Native child windows can move with their parent. Reapply the desired
@@ -842,7 +842,6 @@ pub fn show_statistics(
         geometry.work,
         geometry.collapsed,
         geometry.scale,
-        anchor.y,
         runtime.statistics_height.unwrap_or(INITIAL_PANEL_HEIGHT),
     );
     let provider_changed = runtime.statistics.provider != Some(provider);
@@ -1260,7 +1259,7 @@ mod tests {
             1.0,
             desired,
         );
-        assert_eq!(short.height, 824.0);
+        assert_eq!(short.height, 829.0);
         assert_eq!(tall.height, desired);
         assert_eq!(fitted_height(100.1, 2.0, 1000.0), 202.0);
     }
@@ -1280,12 +1279,12 @@ mod tests {
     }
 
     #[test]
-    fn statistics_content_shrinks_back_to_its_card_anchor_after_screen_clamping() {
+    fn statistics_content_changes_keep_main_top_and_scroll_at_screen_bottom() {
         let main = placement(WORK, None, 1.0, 400.0);
-        let (expanded, side) = statistics_placement(WORK, main, 1.0, 300.0, 1000.0);
-        let (compact, compact_side) = statistics_placement(WORK, main, 1.0, 300.0, 180.0);
-        assert_eq!((expanded.y, expanded.height), (30.0, 824.0));
-        assert_eq!((compact.y, compact.height), (330.0, 180.0));
+        let (expanded, side) = statistics_placement(WORK, main, 1.0, 1000.0);
+        let (compact, compact_side) = statistics_placement(WORK, main, 1.0, 180.0);
+        assert_eq!((expanded.y, expanded.height), (25.0, 829.0));
+        assert_eq!((compact.y, compact.height), (25.0, 180.0));
         assert_eq!(side, compact_side);
         assert_eq!(expanded.x, compact.x);
     }
@@ -1373,8 +1372,34 @@ mod tests {
         );
         assert_eq!(
             (panel.x, panel.y, panel.width, panel.height),
-            (1074.0, 30.0, 360.0, 600.0)
+            (1114.0, 25.0, 320.0, 600.0)
         );
+    }
+
+    #[test]
+    fn menu_bar_gap_is_one_point_with_or_without_a_full_height_tray_icon() {
+        for scale in [1.0, 1.25, 2.0] {
+            let work = Bounds {
+                x: WORK.x * scale,
+                y: WORK.y * scale,
+                width: WORK.width * scale,
+                height: WORK.height * scale,
+            };
+            for anchor in [
+                None,
+                Some(Bounds {
+                    x: 600.0 * scale,
+                    y: 2.0 * scale,
+                    width: 20.0 * scale,
+                    height: 20.0 * scale,
+                }),
+            ] {
+                let main = placement(work, anchor, scale, 400.0);
+                let (statistics, _) = statistics_placement(work, main, scale, 500.0);
+                assert_eq!(main.y - work.y, scale);
+                assert_eq!(statistics.y, main.y);
+            }
+        }
     }
 
     #[test]
@@ -1390,7 +1415,7 @@ mod tests {
             1.0,
             INITIAL_PANEL_HEIGHT,
         );
-        assert_eq!((panel.x, panel.y), (732.0, 254.0));
+        assert_eq!((panel.x, panel.y), (752.0, 254.0));
     }
 
     #[test]
@@ -1417,7 +1442,7 @@ mod tests {
             1.0,
             INITIAL_PANEL_HEIGHT,
         );
-        assert_eq!((left.x, right.x), (6.0, 1074.0));
+        assert_eq!((left.x, right.x), (6.0, 1114.0));
     }
 
     #[test]
@@ -1441,7 +1466,7 @@ mod tests {
         );
         assert_eq!(
             (panel.x, panel.y, panel.width, panel.height),
-            (-2868.0, -1588.0, 720.0, 1200.0)
+            (-2868.0, -1598.0, 640.0, 1200.0)
         );
     }
 
@@ -1456,25 +1481,25 @@ mod tests {
         let panel = placement(work, None, 1.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(
             (panel.x, panel.y, panel.width, panel.height),
-            (6.0, 30.0, 308.0, 388.0)
+            (6.0, 25.0, 308.0, 393.0)
         );
     }
 
     #[test]
-    fn statistics_prefers_right_and_tracks_card_vertical_anchor() {
+    fn statistics_prefers_right_and_aligns_with_main_top() {
         let main = Bounds {
             x: 200.0,
             y: 80.0,
             width: 360.0,
             height: 600.0,
         };
-        let (bounds, side) = statistics_placement(WORK, main, 1.0, 64.0, INITIAL_PANEL_HEIGHT);
+        let (bounds, side) = statistics_placement(WORK, main, 1.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(side, StatisticsSide::Right);
         assert_eq!(
             bounds,
             Bounds {
                 x: 564.0,
-                y: 144.0,
+                y: 80.0,
                 width: 360.0,
                 height: 600.0
             }
@@ -1483,20 +1508,20 @@ mod tests {
     }
 
     #[test]
-    fn statistics_flips_left_at_right_edge_and_clamps_vertical_position() {
+    fn statistics_flips_left_at_right_edge_without_changing_top_alignment() {
         let main = placement(WORK, None, 1.0, INITIAL_PANEL_HEIGHT);
-        let (bounds, side) = statistics_placement(WORK, main, 1.0, 400.0, INITIAL_PANEL_HEIGHT);
+        let (bounds, side) = statistics_placement(WORK, main, 1.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(side, StatisticsSide::Left);
         assert_eq!(
             bounds,
             Bounds {
-                x: 710.0,
-                y: 254.0,
+                x: 750.0,
+                y: 25.0,
                 width: 360.0,
                 height: 600.0
             }
         );
-        assert_eq!(main.x, 1074.0);
+        assert_eq!(main.x, 1114.0);
     }
 
     #[test]
@@ -1508,13 +1533,13 @@ mod tests {
             height: 1550.0,
         };
         let main = placement(work, None, 2.0, INITIAL_PANEL_HEIGHT);
-        let (bounds, side) = statistics_placement(work, main, 2.0, 50.0, INITIAL_PANEL_HEIGHT);
+        let (bounds, side) = statistics_placement(work, main, 2.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(side, StatisticsSide::Left);
         assert_eq!(
             bounds,
             Bounds {
-                x: -1460.0,
-                y: -1488.0,
+                x: -1380.0,
+                y: -1598.0,
                 width: 720.0,
                 height: 1200.0
             }
@@ -1537,10 +1562,10 @@ mod tests {
             width: 360.0,
             height: 600.0,
         };
-        let (bounds, side) = statistics_placement(work, main, 1.0, 100.0, INITIAL_PANEL_HEIGHT);
+        let (bounds, side) = statistics_placement(work, main, 1.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(side, StatisticsSide::Right);
         assert_eq!(bounds.x, -1550.0);
-        assert_eq!(bounds.y, 130.0);
+        assert_eq!(bounds.y, main.y);
     }
 
     #[test]
@@ -1557,7 +1582,7 @@ mod tests {
             width: 360.0,
             height: 600.0,
         };
-        let (bounds, side) = statistics_placement(work, main, 1.0, 0.0, INITIAL_PANEL_HEIGHT);
+        let (bounds, side) = statistics_placement(work, main, 1.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(side, StatisticsSide::Left);
         assert_eq!(
             bounds,
@@ -1579,30 +1604,31 @@ mod tests {
             height: 400.0,
         };
         let main = placement(work, None, 1.0, INITIAL_PANEL_HEIGHT);
-        let (bounds, _) = statistics_placement(work, main, 1.0, 300.0, INITIAL_PANEL_HEIGHT);
+        let (bounds, _) = statistics_placement(work, main, 1.0, INITIAL_PANEL_HEIGHT);
         assert_eq!(
             bounds,
             Bounds {
                 x: -314.0,
-                y: 30.0,
+                y: 25.0,
                 width: 308.0,
-                height: 388.0
+                height: 393.0
             }
         );
         assert_eq!(main, bounds);
     }
 
     #[test]
-    fn invalid_and_negative_anchors_use_main_top() {
-        let main = placement(WORK, None, 1.0, INITIAL_PANEL_HEIGHT);
-        for anchor in [f64::NAN, f64::INFINITY, -100.0] {
-            assert_eq!(
-                statistics_placement(WORK, main, 1.0, anchor, INITIAL_PANEL_HEIGHT)
-                    .0
-                    .y,
-                main.y
-            );
-        }
+    fn tall_statistics_scroll_below_a_lower_main_panel_without_moving_above_it() {
+        let main = Bounds {
+            x: 200.0,
+            y: 300.0,
+            width: PANEL_WIDTH,
+            height: 200.0,
+        };
+        let (statistics, _) = statistics_placement(WORK, main, 1.0, 1000.0);
+        assert_eq!(statistics.y, main.y);
+        assert_eq!(statistics.height, 554.0);
+        assert_eq!(statistics.y + statistics.height, WORK.y + WORK.height - 6.0);
     }
 
     const CARD: Bounds = Bounds {

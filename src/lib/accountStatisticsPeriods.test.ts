@@ -6,7 +6,7 @@ function snapshot(dailyUsage: AccountUsageSnapshot['dailyUsage'], summary: Parti
   return {
     source: 'oauth', status: 'ready', message: null, account: null, accountId: null,
     summary: { lifetimeTokens: null, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null, ...summary },
-    dailyUsage, serviceUpdatedAt: null, updatedAt: null, web: null,
+    dailyUsage, serviceUpdatedAt: null, updatedAt: null,
   };
 }
 

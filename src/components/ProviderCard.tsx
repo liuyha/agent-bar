@@ -1,4 +1,4 @@
-import { AlertCircle, ChevronLeft, ChevronRight, Clock3, RefreshCw } from 'lucide-react';
+import { AlertCircle, Clock3, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { formatCountdown, formatTime } from '../lib/format';
@@ -28,7 +28,13 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
       : windows.length === 0 ? '当前账号未返回可用的用量信息。' : null);
 
   return (
-    <article className={`provider-card provider-${provider.id}${active ? ' provider-card-active' : ''}`} aria-label={`${provider.name} 账号用量`} onMouseEnter={(event) => onShowStatistics?.(event.currentTarget)} onMouseLeave={(event) => onLeaveStatistics?.(event.relatedTarget instanceof Node && document.documentElement.contains(event.relatedTarget))} onFocus={(event) => { if (!detachedStatistics) onShowStatistics?.(event.currentTarget); }}>
+    <article className={`provider-card provider-${provider.id}${active ? ' provider-card-active' : ''}`} aria-label={`${provider.name} 账号用量`} tabIndex={onShowStatistics ? 0 : undefined} aria-description={onShowStatistics ? '按 Enter 或方向键查看使用统计' : undefined} onMouseEnter={(event) => onShowStatistics?.(event.currentTarget)} onMouseLeave={(event) => onLeaveStatistics?.(event.relatedTarget instanceof Node && document.documentElement.contains(event.relatedTarget))} onFocus={(event) => { if (!detachedStatistics) onShowStatistics?.(event.currentTarget); }}
+      onKeyDown={(event) => {
+        if (!onShowStatistics || event.target !== event.currentTarget) return;
+        if (!['Enter', ' ', statisticsSide === 'left' ? 'ArrowLeft' : 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        onShowStatistics(event.currentTarget, true);
+      }}>
       <div className="provider-heading">
         <span className="provider-icon" role="img" aria-label={provider.name} title={provider.name} />
         <div className="provider-identity">
@@ -67,9 +73,6 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
         })}
       </div>}
       {onRefresh && <div className="provider-update-status" aria-live="polite"><Clock3 size={11} aria-hidden="true" /><span>{refreshing ? `正在刷新 ${provider.name}…` : provider.updatedAt ? `更新于 ${formatTime(provider.updatedAt)}` : '尚未获取用量'}</span></div>}
-      {onShowStatistics && <Button type="button" variant="ghost" className={`mt-3 h-auto w-full justify-between rounded-none border-0 border-t border-[var(--line)] px-0 pb-0 pt-[9px] text-left text-[10px] font-normal hover:bg-transparent ${active ? 'text-[var(--text)]' : 'text-[var(--muted)]'}`} aria-expanded={active} aria-haspopup={detachedStatistics ? 'dialog' : undefined} aria-controls={!detachedStatistics && active ? 'token-statistics' : undefined}
-        onClick={(event) => { const anchor = event.currentTarget.closest('article'); if (anchor) onShowStatistics(anchor, true); }}
-        onKeyDown={(event) => { if (event.key !== (statisticsSide === 'left' ? 'ArrowLeft' : 'ArrowRight')) return; event.preventDefault(); const anchor = event.currentTarget.closest('article'); if (anchor) onShowStatistics(anchor, true); }}><span>查看 Token、金额与交互统计</span>{active && statisticsSide === 'left' ? <ChevronLeft size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}</Button>}
     </article>
   );
 }

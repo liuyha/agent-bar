@@ -27,15 +27,37 @@ pub enum CodexStatisticsSource {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase", from = "CompatibleAppSettings")]
 pub struct AppSettings {
     pub refresh_interval_seconds: u64,
     pub enabled_providers: Vec<ProviderId>,
     pub theme: Theme,
     #[serde(default)]
     pub codex_statistics_source: CodexStatisticsSource,
+}
+
+// Accept the removed preference in older settings, but never expose or persist it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompatibleAppSettings {
+    refresh_interval_seconds: u64,
+    enabled_providers: Vec<ProviderId>,
+    theme: Theme,
     #[serde(default)]
-    pub codex_web_extras: bool,
+    codex_statistics_source: CodexStatisticsSource,
+    #[serde(default, rename = "codexWebExtras")]
+    _removed_web_extras: serde::de::IgnoredAny,
+}
+
+impl From<CompatibleAppSettings> for AppSettings {
+    fn from(settings: CompatibleAppSettings) -> Self {
+        Self {
+            refresh_interval_seconds: settings.refresh_interval_seconds,
+            enabled_providers: settings.enabled_providers,
+            theme: settings.theme,
+            codex_statistics_source: settings.codex_statistics_source,
+        }
+    }
 }
 
 impl Default for AppSettings {
@@ -45,7 +67,6 @@ impl Default for AppSettings {
             enabled_providers: vec![ProviderId::Codex, ProviderId::Claude],
             theme: Theme::System,
             codex_statistics_source: CodexStatisticsSource::Local,
-            codex_web_extras: false,
         }
     }
 }
@@ -156,8 +177,7 @@ mod tests {
                 "refreshIntervalSeconds": 300,
                 "enabledProviders": ["codex", "claude"],
                 "theme": "system",
-                "codexStatisticsSource": "local",
-                "codexWebExtras": false
+                "codexStatisticsSource": "local"
             })
         );
         assert!(serde_json::from_value::<AppSettings>(json!({
@@ -169,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn older_settings_keep_local_statistics_and_web_extras_opted_out() {
+    fn older_settings_keep_local_statistics_and_discard_removed_web_preference() {
         let old = json!({
             "refreshIntervalSeconds": 300,
             "enabledProviders": ["codex"],
@@ -180,7 +200,6 @@ mod tests {
             restored.codex_statistics_source,
             CodexStatisticsSource::Local
         );
-        assert!(!restored.codex_web_extras);
         let mut selected = old;
         selected["codexStatisticsSource"] = json!("pat");
         selected["codexWebExtras"] = json!(true);
@@ -194,9 +213,19 @@ mod tests {
                 settings.codex_statistics_source,
                 CodexStatisticsSource::Auto
             );
-            assert!(settings.codex_web_extras);
+            assert!(serde_json::to_value(settings)
+                .unwrap()
+                .get("codexWebExtras")
+                .is_none());
         }
         selected["codexStatisticsSource"] = json!("cookies");
         assert!(serde_json::from_value::<AppSettings>(selected).is_err());
+    }
+
+    #[test]
+    fn settings_still_reject_unknown_preferences() {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value["unknownSetting"] = json!(true);
+        assert!(serde_json::from_value::<AppSettings>(value).is_err());
     }
 }

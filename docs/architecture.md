@@ -25,7 +25,6 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `src/lib/useAccountStatistics.ts` | 服务端统计 store 的初始化、定时刷新、手动事件与账号生命周期 |
 | `src/lib/tokenStatistics.ts` | 按服务保留最新统计、读取已保存汇总、合并并发请求并后台更新 |
 | `src-tauri/src/account_statistics.rs`、`providers/codex/activity.rs` | 账号服务端活动契约、OAuth / PAT / CLI 来源与字段归一化 |
-| `src-tauri/src/codex_web.rs`、`codex_web/` | 用户主动连接的独立网页会话、账号核对及可选网页指标 |
 | `src/components/AccountStatisticsContent.tsx`、`src/lib/accountStatistics.ts` | 服务端统计视图、请求版本和来源隔离 |
 
 ## 数据契约
@@ -37,7 +36,7 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 - 每个窗口包含 `label`、`usedPercent` 和可空的 `resetsAt`。只显示服务实际返回的窗口；窗口数量和周期不固定。
 - `DashboardSnapshot` 包含 `providers`、采集尝试的 `updatedAt`、`mode: "live"` 和递增的 `revision`。重启恢复已保存的版本后继续递增；单个服务失败不阻断其他服务。
 
-`AppSettings` 包含 `enabledProviders`、`refreshIntervalSeconds`、`theme`：默认两项服务、300 秒、跟随系统；支持 60/300/900 秒刷新和 system/light/dark 主题。新增 `codexStatisticsSource: local | auto | oauth | pat | cli`（默认 local）及 `codexWebExtras`（默认 false）。旧设置缺少新字段时按默认值恢复，网页连接始终由用户主动发起。
+`AppSettings` 包含 `enabledProviders`、`refreshIntervalSeconds`、`theme`：默认两项服务、300 秒、跟随系统；支持 60/300/900 秒刷新和 system/light/dark 主题。`codexStatisticsSource: local | auto` 默认 local；旧设置缺少来源字段时按默认值恢复，旧版显式指定的 `oauth`、`pat`、`cli` 来源统一迁移为 `auto`。
 
 | Command | 作用 |
 | --- | --- |
@@ -56,9 +55,8 @@ React 展示账号与用量，Rust 读取本机登录态并采集真实数据。
 | `present_statistics_panel` | 统计窗口完成渲染后回传 revision，原生校验仍有效才显示 |
 | `get_token_statistics` | 在后台线程同步指定服务源日志、聚合统计，写入汇总 JSON 后读回返回 |
 | `get_cached_token_statistics` | 只读指定服务已保存的汇总 JSON；缺失时返回 null，不扫描日志 |
-| `get_codex_account_statistics` | 自动选择服务端认证和查询方式，按已保存开关附加网页数据；返回前复核来源、账号及设置 |
+| `get_codex_account_statistics` | 自动选择服务端认证和查询方式，读取账号 Token 活动；返回前复核来源、账号及设置 |
 | `get_cached_codex_account_statistics` | 仅读取当前登录及配置范围匹配的服务端成功缓存，不发起采集；缺失或失效返回 null |
-| `open_codex_usage_web` | 开关启用后，打开独立的 ChatGPT 用量网页登录窗口 |
 
 `usage-updated` 广播快照；`settings-updated` 广播保存后的设置，使主面板同步主题与服务过滤；`navigate-usage` 重置主面板导航。偏好设置由托盘右键菜单打开独立的 `settings` 窗口（`index.html#settings`），关闭时隐藏并保留草稿，不随主面板失焦收起。前端拒绝较低 `revision`，防止命令返回与后台事件乱序覆盖。
 
@@ -94,11 +92,11 @@ Codex 原生历史读取 `sessions` 和 `archived_sessions`，同时解析 pi / 
 
 ## 账号服务端统计
 
-`AccountUsageSnapshot` 与本地 `TokenStatistics` 分离，包含实际来源、账号元信息、可空活动汇总、可空每日记录、服务端日期和采集时间。界面只展示“本机记录”和“服务端”，服务端内部自动选择 PAT / OAuth / 受控 CLI 路径，不展示实际认证方式。旧版显式来源设置迁移为 `auto`。OAuth / PAT 直接请求 `wham/profiles/me`；CLI 使用 `account/usage/read`。前端 `accountStatisticsPeriods.ts` 按本地日历选择服务端日期，今日／本周／本月／本年仅汇总匹配的每日记录；全部只读服务端累计与峰值汇总，缺失不回退为有限日记录总和。两类来源共用 `StatisticsPeriodSwitch`，时段切换不触发额外请求；账号活动概览与网页补充不随时段变化。网页补充采用独立的临时登录会话，仅允许已确认的同账号数据。详细字段和单位边界见 [账号服务端统计](account-statistics.md)。
+`AccountUsageSnapshot` 与本地 `TokenStatistics` 分离，包含实际来源、账号元信息、可空活动汇总、可空每日记录、服务端日期和采集时间。界面只展示“本机记录”和“服务端”，服务端内部自动选择 PAT / OAuth / 受控 CLI 路径，不展示实际认证方式。旧版显式来源设置迁移为 `auto`。OAuth / PAT 直接请求 `wham/profiles/me`；CLI 使用 `account/usage/read`。前端 `accountStatisticsPeriods.ts` 按本地日历选择服务端日期，今日／本周／本月／本年仅汇总匹配的每日记录；全部只读服务端累计与峰值汇总，缺失不回退为有限日记录总和。两类来源共用 `StatisticsPeriodSwitch`，时段切换不触发额外请求；账号活动概览不随时段变化。详细字段和单位边界见 [账号服务端统计](account-statistics.md)。
 
-`account_statistics_cache.rs` 保存带版本、来源和登录范围摘要的成功快照，复用原子写与私有权限；请求顺序校验防止迟到结果覆盖新请求。只读缓存命令不调用采集器，查询及保存前后复核当前范围和设置。桌面服务端 store 与定时器由常驻的 `StatisticsWindow` 通过 `useAccountStatistics` 唯一持有，主窗口和设置窗口不重复请求。初始化先仅读缓存、缺失再获取；隐藏统计窗口不卸载刷新生命周期。独立周期触发 `refreshing`（保留内容、按钮旋转），按钮与托盘手动事件触发 `loading`（面板加载）；在途请求合并，手动可升级自动请求的反馈。账号/来源/网页设置变化会取消旧生命周期并重新核验缓存。
+`account_statistics_cache.rs` 保存带版本、来源和登录范围摘要的成功快照，复用原子写与私有权限；请求顺序校验防止迟到结果覆盖新请求。只读缓存命令不调用采集器，查询及保存前后复核当前范围和设置。桌面服务端 store 与定时器由常驻的 `StatisticsWindow` 通过 `useAccountStatistics` 唯一持有，主窗口和设置窗口不重复请求。初始化先仅读缓存、缺失再获取；隐藏统计窗口不卸载刷新生命周期。独立周期触发 `refreshing`（保留内容、按钮旋转），按钮与托盘手动事件触发 `loading`（面板加载）；在途请求合并，手动可升级自动请求的反馈。账号或来源变化会取消旧生命周期并重新核验缓存。
 
-服务端结果不写入本机汇总 JSON，不复用仅按 ProviderId 区分的本机缓存。前端每次请求递增版本，来源／账号／网页开关改变后取消旧结果；认证失败清除旧远端值。Rust 在采集前后复核已保存设置以及当前 `CODEX_HOME` 的认证／配置指纹，防止异步请求返回另一账号的数据。网页本身无 Tauri 原生权限；账号统计和网页连接命令仅允许可信的 `main`、`settings`、`statistics` 窗口。面板控制限于 `main` / `statistics`，展开请求仅来自 `main`，渲染确认仅来自 `statistics`。
+服务端结果不写入本机汇总 JSON，不复用仅按 ProviderId 区分的本机缓存。前端每次请求递增版本，来源或账号改变后取消旧结果；认证失败清除旧远端值。Rust 在采集前后复核已保存设置以及当前 `CODEX_HOME` 的认证／配置指纹，防止异步请求返回另一账号的数据。账号统计命令仅允许可信的 `main`、`settings`、`statistics` 窗口。面板控制限于 `main` / `statistics`，展开请求仅来自 `main`，渲染确认仅来自 `statistics`。
 
 ## 菜单栏摘要
 

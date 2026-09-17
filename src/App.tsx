@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlertCircle, Check, Clock3, Layers3, LoaderCircle, Monitor, Moon, RefreshCw, Sun, X } from 'lucide-react';
+import { AlertCircle, Check, Clock3, Info, Layers3, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Settings, Sun, X } from 'lucide-react';
+import { AboutDialog } from './components/AboutDialog';
 import { ProviderCard } from './components/ProviderCard';
 import { TokenStatisticsPanel } from './components/TokenStatisticsPanel';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { NativeSelect } from '@/components/ui/native-select';
-import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, refreshDashboard, refreshProviderDashboard, saveSettings, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
+import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, quitApp, refreshDashboard, refreshProviderDashboard, saveSettings, showSettings, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
 import { mergeDashboardSnapshot } from './lib/snapshot';
 import { codexStatisticsSources } from './lib/settings';
 import { useAccountStatistics } from './lib/useAccountStatistics';
@@ -30,7 +31,7 @@ function errorMessage(error: unknown): string {
 
 function sameSettings(a: AppSettings, b: AppSettings): boolean {
   return a.refreshIntervalSeconds === b.refreshIntervalSeconds && a.theme === b.theme &&
-    a.codexStatisticsSource === b.codexStatisticsSource && a.codexWebExtras === b.codexWebExtras &&
+    a.codexStatisticsSource === b.codexStatisticsSource &&
     a.enabledProviders.length === b.enabledProviders.length &&
     a.enabledProviders.every((provider) => b.enabledProviders.includes(provider));
 }
@@ -45,6 +46,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshingProviders, setRefreshingProviders] = useState<Partial<Record<ProviderId, boolean>>>({});
   const [providerErrors, setProviderErrors] = useState<Partial<Record<ProviderId, string | null>>>({});
   const [statisticsRefreshes, setStatisticsRefreshes] = useState<Partial<Record<ProviderId, number>>>({});
@@ -68,6 +70,7 @@ export default function App() {
   const mainContent = useRef<HTMLElement>(null);
   const shell = useRef<HTMLDivElement>(null);
   const naturalContent = useRef<HTMLDivElement>(null);
+  const aboutDialog = useRef<HTMLDialogElement>(null);
   const usageLayout = useRef<HTMLDivElement>(null);
   const statisticsAnchor = useRef<{ provider: ProviderId; element: HTMLElement } | null>(null);
   const lastInteraction = useRef('');
@@ -170,6 +173,7 @@ export default function App() {
   }, []);
 
   const resetUsage = useCallback(() => {
+    aboutDialog.current?.close();
     setStatisticsProvider(null);
     setNow(Date.now());
     mainContent.current?.scrollTo({ top: 0 });
@@ -297,25 +301,31 @@ export default function App() {
   }, [acceptSnapshot, resetUsage, isSettingsWindow]);
 
   const refresh = useCallback(async () => {
-    if (refreshLock.current || saveLock.current) return;
+    if (refreshLock.current || saveLock.current || providerRefreshLocks.current.size > 0) return;
     refreshLock.current = true;
+    setRefreshing(true);
     const version = ++requestVersion.current;
     setDashboardError(null);
     try {
       const nextSnapshot = await refreshDashboard();
       if (alive.current) {
         acceptSnapshot(nextSnapshot);
+        setProviderErrors({});
         setNow(Date.now());
       }
     } catch (error) {
       if (alive.current && version === requestVersion.current) setDashboardError(`刷新失败：${errorMessage(error)}`);
     } finally {
       refreshLock.current = false;
+      if (alive.current) {
+        setRefreshing(false);
+        setStatisticsRefreshes((current) => ({ codex: (current.codex ?? 0) + 1, claude: (current.claude ?? 0) + 1 }));
+      }
     }
   }, [acceptSnapshot]);
 
   const refreshProvider = useCallback(async (provider: ProviderId) => {
-    if (providerRefreshLocks.current.has(provider) || saveLock.current) return;
+    if (providerRefreshLocks.current.has(provider) || refreshLock.current || saveLock.current) return;
     providerRefreshLocks.current.add(provider);
     const version = requestVersion.current;
     setRefreshingProviders((current) => ({ ...current, [provider]: true }));
@@ -344,6 +354,21 @@ export default function App() {
     const interval = window.setInterval(() => { void refresh(); }, settings.refreshIntervalSeconds * 1_000);
     return () => window.clearInterval(interval);
   }, [settings, loading, bootError, refresh]);
+
+  async function runMenuAction(action: () => Promise<void>, label: string) {
+    try {
+      await action();
+    } catch (error) {
+      if (alive.current) setDashboardError(`${label}失败：${errorMessage(error)}`);
+    }
+  }
+
+  async function openAbout() {
+    cancelStatisticsLeave();
+    if (isDesktop) await hideStatisticsPanel();
+    setStatisticsProvider(null);
+    if (alive.current) aboutDialog.current?.showModal();
+  }
 
   function updateDraft(patch: Partial<AppSettings>) {
     setDraft((current) => current ? { ...current, ...patch } : current);
@@ -391,7 +416,7 @@ export default function App() {
     }
   }
 
-  async function saveStatisticsPreferences(patch: Pick<AppSettings, 'codexStatisticsSource' | 'codexWebExtras'>) {
+  async function saveStatisticsPreferences(patch: Pick<AppSettings, 'codexStatisticsSource'>) {
     if (!settings || saveLock.current) throw new Error('设置正在保存，请稍后重试。');
     saveLock.current = true;
     setSaving(true);
@@ -427,6 +452,7 @@ export default function App() {
 
       <main className="main-content" ref={mainContent} onScroll={repositionStatistics}>
         <div className="window-content" ref={naturalContent}>
+        {!isSettingsWindow && dashboardError && <ErrorNotice>{dashboardError}</ErrorNotice>}
         {loading ? (
           <div className="state-panel" role="status"><LoaderCircle className="spin" size={25} /><h1>正在加载</h1><p>{isDesktop ? '读取本地设置与账号用量…' : '读取本地设置…'}</p></div>
         ) : bootError ? (
@@ -434,14 +460,13 @@ export default function App() {
         ) : !isSettingsWindow ? (
           <div ref={usageLayout} className={`usage-layout${statisticsExpanded ? ' has-statistics' : ''}`} onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)} onFocus={cancelStatisticsLeave} onBlur={() => scheduleStatisticsLeave()}>
             <div className="usage-overview">
-            {dashboardError && <ErrorNotice>{dashboardError}</ErrorNotice>}
             {visibleProviders.length > 0 ? (
-              <div className="provider-list">{visibleProviders.map((provider) => <ProviderCard key={provider.id} provider={provider} now={now} active={selectedProvider?.id === provider.id} statisticsSide={statisticsSide} detachedStatistics={isDesktop} onLeaveStatistics={leaveStatisticsCard} onShowStatistics={(anchor, focus) => openStatistics(provider.id, anchor, focus)} onRefresh={() => { void refreshProvider(provider.id); }} refreshing={refreshingProviders[provider.id]} refreshDisabled={saving} refreshError={providerErrors[provider.id]} />)}</div>
+            <div className="provider-list">{visibleProviders.map((provider) => <ProviderCard key={provider.id} provider={provider} now={now} active={selectedProvider?.id === provider.id} statisticsSide={statisticsSide} detachedStatistics={isDesktop} onLeaveStatistics={leaveStatisticsCard} onShowStatistics={(anchor, focus) => openStatistics(provider.id, anchor, focus)} onRefresh={() => { void refreshProvider(provider.id); }} refreshing={refreshingProviders[provider.id]} refreshDisabled={saving || refreshing} refreshError={providerErrors[provider.id]} />)}</div>
             ) : (
-              <div className="state-panel empty-state"><Layers3 size={29} /><h2>还没有显示的服务</h2><p>右键点击菜单栏图标，进入「偏好设置」，<br />启用 Codex 或 Claude 查看账号用量。</p></div>
+              <div className="state-panel empty-state"><Layers3 size={29} /><h2>还没有显示的服务</h2><p>点击下方「偏好设置」，<br />启用 Codex 或 Claude 查看账号用量。</p></div>
             )}
             </div>
-            {!isDesktop && selectedProvider && settings && <div onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)}><TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} account={selectedProvider.account} settings={settings} saving={saving} onPreferencesChange={saveStatisticsPreferences} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} accountStatisticsStore={accountStatisticsStore} onClose={() => setStatisticsProvider(null)} /></div>}
+            {!isDesktop && selectedProvider && settings && <div onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)}><TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} account={selectedProvider.account} settings={settings} saving={saving} onPreferencesChange={saveStatisticsPreferences} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} accountStatisticsStore={accountStatisticsStore} /></div>}
           </div>
         ) : draft ? (
           <div className="settings-page">
@@ -460,8 +485,7 @@ export default function App() {
               <fieldset className="settings-group" disabled={saving}>
                 <legend>Codex 使用统计</legend>
                 <div className="setting-row"><label htmlFor="codex-statistics-source">统计来源</label><NativeSelect id="codex-statistics-source" value={draft.codexStatisticsSource} onChange={(event) => updateDraft({ codexStatisticsSource: event.target.value as CodexStatisticsPreference })}>{codexStatisticsSources.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</NativeSelect></div>
-                <label className="mx-px mt-[11px] flex cursor-pointer items-center gap-1.5 text-[11px] text-secondary-foreground" htmlFor="codex-web-extras"><Checkbox id="codex-web-extras" checked={draft.codexWebExtras} disabled={saving} onCheckedChange={(checked) => updateDraft({ codexWebExtras: checked === true })} /><span>启用可选网页补充</span></label>
-                <p className="statistics-footnote">本机记录提供日、周、月、年及全部统计。服务端查询账号汇总和每日 Token，由程序自动选择可用的连接方式。网页补充可单独查看 Credits 和网页用量，需连接用量网页。</p>
+                <p className="statistics-footnote">本机记录提供日、周、月、年及全部统计。服务端查询账号汇总和每日 Token，由程序自动选择可用的连接方式。</p>
               </fieldset>
               <fieldset className="settings-group" disabled={saving}>
                 <legend>外观</legend>
@@ -475,7 +499,17 @@ export default function App() {
         ) : null}
         </div>
       </main>
-      <footer className="app-footer"><Monitor size={12} aria-hidden="true" /><span>{isDesktop ? '自动读取本机已登录账号' : '读取本机账号请使用桌面应用'}</span></footer>
+      {isSettingsWindow ? (
+        <footer className="app-footer"><Monitor size={12} aria-hidden="true" /><span>{isDesktop ? '自动读取本机已登录账号' : '读取本机账号请使用桌面应用'}</span></footer>
+      ) : (
+        <footer className="panel-menu" aria-label="操作菜单">
+          <Button type="button" variant="ghost" size="sm" disabled={loading || refreshing || saving || Object.values(refreshingProviders).some(Boolean)} aria-busy={refreshing} onClick={() => { if (bootError) setLoadAttempt((attempt) => attempt + 1); else void refresh(); }}><RefreshCw className={refreshing ? 'spin' : undefined} size={13} aria-hidden="true" /><span>{refreshing ? '刷新中' : '刷新'}</span></Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => { void runMenuAction(showSettings, '打开偏好设置'); }}><Settings size={13} aria-hidden="true" /><span>偏好设置</span></Button>
+          <Button type="button" variant="ghost" size="sm" aria-haspopup="dialog" onClick={() => { void runMenuAction(openAbout, '打开关于 AgentBar'); }}><Info size={13} aria-hidden="true" /><span>关于 AgentBar</span></Button>
+          <Button type="button" variant="ghost" size="sm" disabled={!isDesktop} title={!isDesktop ? '请在桌面应用中退出 AgentBar' : undefined} onClick={() => { void runMenuAction(quitApp, '退出'); }}><LogOut size={13} aria-hidden="true" /><span>退出</span></Button>
+        </footer>
+      )}
+      {!isSettingsWindow && <AboutDialog dialogRef={aboutDialog} />}
     </div>
   );
 }
