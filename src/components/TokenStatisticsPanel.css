@@ -22,3 +22,4 @@
 .account-daily-bar i { display: block; height: 100%; background: var(--text); opacity: .55; border-radius: inherit; }
 .account-statistics-details { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 9px; }
 .account-statistics-details summary { color: var(--secondary); font-size: 10px; overflow-wrap: anywhere; cursor: pointer; }
+.account-statistics-timestamps { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; white-space: nowrap; }

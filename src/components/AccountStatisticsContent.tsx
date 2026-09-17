@@ -59,8 +59,10 @@ export function AccountStatisticsContent({ statistics, loading, refreshing, erro
       <div><dt>当前连续活跃</dt><dd>{number(summary?.currentStreakDays ?? null, ' 天')}</dd></div>
       <div><dt>最长连续活跃</dt><dd>{number(summary?.longestStreakDays ?? null, ' 天')}</dd></div>
     </dl></details>
-    <div className="statistics-updated">服务端更新于 {fullTime(ready ? statistics.serviceUpdatedAt : null)}</div>
-    <div className="statistics-updated">采集于 {fullTime(ready ? statistics.updatedAt : null)}</div>
+    <div className="account-statistics-timestamps">
+      <div className="statistics-updated">服务端更新于 {fullTime(ready ? statistics.serviceUpdatedAt : null)}</div>
+      <div className="statistics-updated">采集于 {fullTime(ready ? statistics.updatedAt : null)}</div>
+    </div>
   </>;
 }
 
