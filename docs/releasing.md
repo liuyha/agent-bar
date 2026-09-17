@@ -4,12 +4,16 @@
 
 ## 构建产物与支持范围
 
-| 平台 | 架构 / Rust target | 安装包 |
-| --- | --- | --- |
-| macOS | Apple Silicon / `aarch64-apple-darwin` | `.dmg` |
-| macOS | Intel / `x86_64-apple-darwin` | `.dmg` |
-| Windows | x64 / `x86_64-pc-windows-msvc` | NSIS `.exe`、`.msi` |
-| Linux | x64 / `x86_64-unknown-linux-gnu` | `.deb`、`.AppImage` |
+| 平台 | 架构 / Rust target | GitHub 运行器 | 安装包 |
+| --- | --- | --- | --- |
+| macOS | ARM64（Apple Silicon） / `aarch64-apple-darwin` | `macos-15` | `.dmg` |
+| macOS | x86_64（Intel） / `x86_64-apple-darwin` | `macos-15-intel` | `.dmg` |
+| Windows | x86_64 / `x86_64-pc-windows-msvc` | `windows-latest` | NSIS `.exe`、`.msi` |
+| Windows | ARM64 / `aarch64-pc-windows-msvc` | `windows-11-arm` | NSIS `.exe`、`.msi` |
+| Linux | x86_64 / `x86_64-unknown-linux-gnu` | `ubuntu-22.04` | `.deb`、`.AppImage` |
+| Linux | ARM64 / `aarch64-unknown-linux-gnu` | `ubuntu-22.04-arm` | `.deb`、`.AppImage` |
+
+每次发布共有六种目标、10 个安装包和一个 `SHA256SUMS.txt`。各目标使用相同架构的运行器执行 Rust 检查、测试与打包。文件名中的 `x64`、`x86_64`、`amd64` 都指 64 位 Intel/AMD 架构；`arm64`、`aarch64` 指 64 位 ARM 架构。本工作流不生成 32 位 x86 或 ARM 安装包。
 
 macOS 最低系统版本为 12。Windows 和 Linux 目前为实验支持，尚未完成对应系统上的安装、账号读取、托盘和窗口交互验收；云端编译与测试通过不能代替这些原生检查。Linux 通过托盘菜单打开面板。
 
@@ -21,13 +25,13 @@ macOS 构建使用 `APPLE_SIGNING_IDENTITY=-` 进行 ad-hoc 签名，未配置 A
 2. 确认仓库的 **Actions** 已启用，且仓库或组织策略允许工作流使用声明的 `contents: write` 权限创建 Release。
 3. 在 [Actions](https://github.com/liuyha/agent-bar/actions) 中确认出现 **Release** 工作流。手动运行按钮要求工作流文件已经存在于默认分支。
 
-[CI 工作流](../.github/workflows/ci.yml) 提供 macOS、Windows 和 Linux 检查；Release 工作流还会校验版本、运行检查并构建安装包。
+[CI 工作流](../.github/workflows/ci.yml) 提供三个系统各两种架构的检查；Release 工作流还会校验版本、运行检查并构建安装包。`Check` 工作流仅检查代码，不生成可下载的发行安装包；需要运行 `Release` 工作流。
 
 ## 发布一个新版本
 
 ### 1. 统一版本号
 
-以下四处必须一致，版本标签必须等于 `v` 加上该版本号，例如 `0.1.0` 对应 `v0.1.0`：
+以下四处必须一致，版本标签必须等于 `v` 加上该版本号，例如 `0.1.1` 对应 `v0.1.1`：
 
 - `package.json` 的 `version`。
 - `src-tauri/tauri.conf.json` 的 `version`。
@@ -46,20 +50,22 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ### 2. 推送版本标签
 
-在准备发布的提交上打标签并推送。以下以 `0.1.0` 为例；每次正式发布使用新的版本号：
+先将工作流、代码和版本修改提交并推送到 `main`，然后在准备发布的提交上打标签并推送。以下以 `0.1.1` 为例；每次正式发布使用新的版本号：
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 推送 `v*` 标签会自动触发 Release 工作流，构建的是标签指向的代码。标签必须包含本次工作流与配套修改。
 
-也可打开 **Actions → Release → Run workflow**，在 `tag` 输入框填写已经推送的版本标签，例如 `v0.1.0`。手动运行不会替你创建标签，仍按指定标签检出并构建代码。
+也可打开 **Actions → Release → Run workflow**，在 `tag` 输入框填写已经推送的版本标签，例如 `v0.1.1`。手动运行不会替你创建标签，仍按指定标签检出并构建代码。
+
+已有的 `v0.1.0` 指向旧版四目标配置；重跑旧标签不会自动使用 `main` 上的六目标配置。保留旧标签，使用包含新配置的新版本标签。
 
 ### 3. 检查草稿并公开
 
-1. 在 Actions 中确认版本校验、检查、四个构建任务和最终 Release 汇总任务全部成功。
+1. 在 Actions 中确认版本校验、检查、六个构建任务和最终 Release 汇总任务全部成功。
 2. 打开 [Releases](https://github.com/liuyha/agent-bar/releases)，进入对应版本的草稿。
 3. 核对各平台安装包和 `SHA256SUMS.txt` 已完整上传，下载试用并补充更新说明。Windows / Linux 发布说明保留实验支持与尚未完成原生验收的状态。
 4. 确认后点击 **Publish release**。

@@ -84,7 +84,7 @@ pnpm desktop:build
 
 产物位于 `src-tauri/target/release/bundle/`，安装包格式随构建平台而定。该命令构建本机平台的应用，不代表已完成签名或其他平台验证。
 
-维护者可通过版本标签触发 GitHub Actions，在云端生成 macOS、Windows 和 Linux 安装包并汇总到 Release 草稿，无需持有各平台电脑。操作步骤见 [自动构建与发布](docs/releasing.md)。
+维护者可通过版本标签触发 GitHub Actions，在云端为 macOS、Windows 和 Linux 分别生成 x86_64、ARM64 安装包，共六种目标，并汇总到 Release 草稿，无需持有各平台电脑。操作步骤见 [自动构建与发布](docs/releasing.md)。
 
 仅预览前端时可运行 `pnpm dev`，打开 `http://127.0.0.1:1420`；偏好设置地址为 `/#settings`。浏览器预览不需要 Rust，也无法读取本机账号或会话日志，会显示桌面端使用提示。
 

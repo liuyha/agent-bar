@@ -147,9 +147,10 @@ mod tests {
     fn successful_cache_survives_new_instance_with_private_permissions() {
         let home = tempfile::tempdir().unwrap();
         let directory = storage::data_dir(home.path());
-        let order = RequestOrder(Mutex::new(0));
-        save(&order, &directory, ready(41));
-        drop(order);
+        {
+            let order = RequestOrder(Mutex::new(0));
+            save(&order, &directory, ready(41));
+        }
         let restored = read_cached(&directory, SOURCE, Some(SCOPE))
             .unwrap()
             .unwrap();

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '已推送的版本标签，例如 v0.1.0'
+        description: '已推送的版本标签，例如 v0.1.1'
         required: true
         type: string
 
@@ -58,14 +58,20 @@ jobs:
           - platform: macos-15
             target: aarch64-apple-darwin
             bundles: dmg
-          - platform: macos-15
+          - platform: macos-15-intel
             target: x86_64-apple-darwin
             bundles: dmg
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: nsis,msi
+          - platform: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bundles: nsis,msi
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
             bundles: deb,appimage
     runs-on: ${{ matrix.platform }}
     steps:
@@ -145,7 +151,9 @@ jobs:
               'aarch64-apple-darwin': ['.dmg'],
               'x86_64-apple-darwin': ['.dmg'],
               'x86_64-pc-windows-msvc': ['.exe', '.msi'],
+              'aarch64-pc-windows-msvc': ['.exe', '.msi'],
               'x86_64-unknown-linux-gnu': ['.deb', '.AppImage'],
+              'aarch64-unknown-linux-gnu': ['.deb', '.AppImage'],
           }
           output = pathlib.Path('release-assets')
           output.mkdir()
@@ -186,8 +194,8 @@ jobs:
             cat > release-notes.md <<'NOTES'
           ## 下载
           - macOS：按芯片选择 aarch64（Apple Silicon）或 x64（Intel）的 DMG。
-          - Windows x64：选择安装程序 .exe 或 .msi。
-          - Linux x64：选择 .AppImage 或 .deb，通过托盘菜单打开面板。
+          - Windows：按设备处理器选择 x64 或 ARM64 的 .exe / .msi 安装程序。
+          - Linux：按设备处理器选择 amd64 / x86_64 或 arm64 / aarch64 的 .AppImage / .deb，通过托盘菜单打开面板。
           - SHA256SUMS.txt 提供安装包校验值。
 
           ## 当前支持范围
@@ -202,6 +210,6 @@ jobs:
           release_url=$(gh release view "$RELEASE_TAG" --json url --jq '.url')
           {
             echo "### AgentBar $RELEASE_TAG"
-            echo "全部四种目标的安装包与 SHA-256 校验文件已上传到 [Release 草稿]($release_url)。"
+            echo "全部六种目标的 10 个安装包与 SHA-256 校验文件已上传到 [Release 草稿]($release_url)。"
             echo '请下载验证并完善说明，再在 GitHub 点击 Publish release。'
           } >> "$GITHUB_STEP_SUMMARY"

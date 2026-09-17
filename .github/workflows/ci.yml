@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-15, windows-latest, ubuntu-22.04]
+        platform: [macos-15, macos-15-intel, windows-latest, windows-11-arm, ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
     steps:
