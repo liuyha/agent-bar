@@ -14,6 +14,10 @@
   --app-bg: #ffffff;
   --card-bg: #ffffff;
   --subtle-bg: #f5f5f5;
+  --glass-bg: rgb(255 255 255 / 24%);
+  --glass-card-bg: rgb(255 255 255 / 42%);
+  --glass-subtle-bg: rgb(255 255 255 / 20%);
+  --glass-edge: rgb(255 255 255 / 48%);
   --text: #181818;
   --muted: #6e6e6e;
   --secondary: #5f5f5f;
@@ -42,6 +46,10 @@
   --app-bg: #212121;
   --card-bg: #262626;
   --subtle-bg: #2c2c2c;
+  --glass-bg: rgb(24 24 24 / 28%);
+  --glass-card-bg: rgb(56 56 56 / 34%);
+  --glass-subtle-bg: rgb(48 48 48 / 25%);
+  --glass-edge: rgb(255 255 255 / 10%);
   --text: #ececec;
   --muted: #a1a1a1;
   --secondary: #b4b4b4;
@@ -71,6 +79,10 @@
     --app-bg: #212121;
     --card-bg: #262626;
     --subtle-bg: #2c2c2c;
+    --glass-bg: rgb(24 24 24 / 28%);
+    --glass-card-bg: rgb(56 56 56 / 34%);
+    --glass-subtle-bg: rgb(48 48 48 / 25%);
+    --glass-edge: rgb(255 255 255 / 10%);
     --text: #ececec;
     --muted: #a1a1a1;
     --secondary: #b4b4b4;
@@ -106,8 +118,9 @@ button:focus-visible, select:focus-visible, label:has(input:focus-visible) { out
 button { transition: background 150ms ease, color 150ms ease, opacity 150ms ease, border-color 150ms ease; }
 svg { flex-shrink: 0; }
 
-.app-shell { width: calc(100% - 32px); max-width: 456px; min-height: 650px; margin: 32px auto; padding: 24px; display: flex; flex-direction: column; background: var(--app-bg); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); }
-.app-desktop { width: 100%; max-width: none; min-height: 100dvh; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.app-shell { width: calc(100% - 32px); max-width: 456px; margin: 32px auto; padding: 24px; display: flex; flex-direction: column; background: var(--app-bg); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); }
+.app-desktop { width: 100%; max-width: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.window-content { display: flow-root; }
 .app-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 18px; }
 .header-actions { display: flex; align-items: center; gap: 7px; }
 .brand { display: flex; align-items: center; gap: 10px; }
@@ -179,7 +192,7 @@ fieldset:disabled label { cursor: default; opacity: .65; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 500px) {
-  .app-shell { width: 100%; min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; margin: 0; padding: 22px; }
+  .app-shell { width: 100%; border: 0; border-radius: 0; box-shadow: none; margin: 0; padding: 22px; }
 }
 @media (max-width: 360px) {
   .app-shell { padding: 18px 15px; }
@@ -188,8 +201,8 @@ fieldset:disabled label { cursor: default; opacity: .65; }
   .provider-card { padding: 13px 12px 11px; }
 }
 
-/* Keep the tray panel inside its native viewport; only page content scrolls. */
-.app-desktop { height: 100dvh; min-height: 0; padding: 14px; overflow: hidden; }
+/* Fit content naturally; the native work-area limit caps only the viewport. */
+.app-desktop { max-height: 100dvh; min-height: 0; padding: 14px; overflow: hidden; }
 .app-desktop > .app-header,
 .app-desktop > .app-footer { flex-shrink: 0; }
 .app-desktop .app-header { margin-bottom: 12px; }
@@ -197,7 +210,7 @@ fieldset:disabled label { cursor: default; opacity: .65; }
 .app-desktop .brand-mark { width: 29px; height: 29px; border-radius: 8px; padding-bottom: 6px; }
 .app-desktop .brand-name { font-size: 16px; }
 .app-desktop .brand-caption { display: none; }
-.app-desktop .main-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 0 3px; margin: 0 -3px; }
+.app-desktop .main-content { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 0 3px; margin: 0 -3px; }
 .app-desktop .section-heading { margin-top: 10px; }
 .app-desktop .provider-list { gap: 9px; }
 .app-desktop .provider-card { padding: 12px; }
@@ -261,7 +274,32 @@ fieldset:disabled label { cursor: default; opacity: .65; }
 
 .app-desktop.settings-window { padding: 22px; }
 .app-desktop.statistics-window { display: block; padding: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.app-desktop.statistics-window > .token-statistics { min-height: 100dvh; margin: 0; padding: 14px; border: 0; border-radius: 0; background: var(--app-bg); }
-.app-desktop.statistics-window > .statistics-notice { margin: 0; padding: 12px 14px 0; }
+.app-desktop.statistics-window > .window-content > .token-statistics { margin: 0; padding: 14px; border: 0; border-radius: 0; background: var(--app-bg); }
+.app-desktop.statistics-window > .window-content > .statistics-notice { margin: 0; padding: 12px 14px 0; }
+
+/* macOS blurs the desktop behind the window; these layers only tint the glass. */
+:root[data-native-glass='true'] {
+  --page-bg: transparent;
+  --card-bg: var(--glass-card-bg);
+  --subtle-bg: var(--glass-subtle-bg);
+  background: transparent;
+}
+:root[data-native-glass='true'] body,
+:root[data-native-glass='true'] #root { background: transparent; }
+:root[data-native-glass='true'] .app-desktop {
+  background: var(--glass-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-edge);
+}
+:root[data-native-glass='true'] .app-desktop:not(.settings-window) { border-radius: 12px; }
+:root[data-native-glass='true'] .statistics-window > .window-content > .token-statistics { background: transparent; }
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-native-glass='true'] {
+    --glass-bg: var(--app-bg);
+    --glass-card-bg: var(--app-bg);
+    --glass-subtle-bg: var(--hover-bg);
+    --glass-edge: var(--line);
+  }
+}
 
 @tailwind utilities;

@@ -59,6 +59,11 @@ export async function presentStatisticsPanel(revision: number): Promise<void> {
   if (isDesktop) await invoke('present_statistics_panel', { revision });
 }
 
+export function resizeContentWindow(height: number, revision?: number): Promise<void> {
+  if (!isDesktop) return Promise.resolve();
+  return enqueue(() => invoke('resize_content_window', { height, revision }));
+}
+
 export async function getStatisticsPanelState(): Promise<StatisticsPanelState> {
   return isDesktop ? invoke('get_statistics_panel_state') : closedState;
 }

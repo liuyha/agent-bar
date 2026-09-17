@@ -9,6 +9,7 @@ import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, refreshD
 import { mergeDashboardSnapshot } from './lib/snapshot';
 import { codexStatisticsSources } from './lib/settings';
 import { useAccountStatistics } from './lib/useAccountStatistics';
+import { useContentWindowHeight } from './lib/useContentWindowHeight';
 import { dismissPanel, getStatisticsPanelState, hideStatisticsPanel, setPanelInteraction, showStatisticsPanel, updateStatisticsPanelAnchor, subscribeToStatisticsPanel, type StatisticsPanelState } from './lib/panel';
 import type { AppSettings, CodexStatisticsPreference, DashboardSnapshot, ProviderId, Theme } from './types';
 
@@ -65,10 +66,19 @@ export default function App() {
   const providerRefreshLocks = useRef(new Set<ProviderId>());
   const saveLock = useRef(false);
   const mainContent = useRef<HTMLElement>(null);
+  const shell = useRef<HTMLDivElement>(null);
+  const naturalContent = useRef<HTMLDivElement>(null);
   const usageLayout = useRef<HTMLDivElement>(null);
   const statisticsAnchor = useRef<{ provider: ProviderId; element: HTMLElement } | null>(null);
   const lastInteraction = useRef('');
   const statisticsLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const reportHeightError = useCallback((error: unknown) => {
+    const message = `调整窗口高度失败：${errorMessage(error)}`;
+    if (isSettingsWindow) setSettingsError(message);
+    else setDashboardError(message);
+  }, [isSettingsWindow]);
+  useContentWindowHeight({ shell, content: naturalContent, viewport: mainContent, onError: reportHeightError });
 
   function cancelStatisticsLeave() {
     if (statisticsLeaveTimer.current !== null) clearTimeout(statisticsLeaveTimer.current);
@@ -403,7 +413,7 @@ export default function App() {
   const statisticsExpanded = !isDesktop && Boolean(selectedProvider);
 
   return (
-    <div onWheelCapture={() => reportInteraction('pointer', true)} onMouseMove={() => reportInteraction('pointer', true)} onMouseDownCapture={() => reportInteraction('pointer')} onMouseEnter={() => reportInteraction('pointer')} onMouseLeave={() => reportInteraction('leave')} onKeyDown={() => { queueMicrotask(() => reportInteraction('keyboard')); }} onFocus={() => reportInteraction()} onBlur={() => { queueMicrotask(() => reportInteraction()); }} className={`app-shell${isDesktop ? ' app-desktop' : ''}${statisticsExpanded ? ' statistics-expanded' : ''}${isSettingsWindow ? ' settings-window' : ''}`}>
+    <div ref={shell} onWheelCapture={() => reportInteraction('pointer', true)} onMouseMove={() => reportInteraction('pointer', true)} onMouseDownCapture={() => reportInteraction('pointer')} onMouseEnter={() => reportInteraction('pointer')} onMouseLeave={() => reportInteraction('leave')} onKeyDown={() => { queueMicrotask(() => reportInteraction('keyboard')); }} onFocus={() => reportInteraction()} onBlur={() => { queueMicrotask(() => reportInteraction()); }} className={`app-shell${isDesktop ? ' app-desktop' : ''}${statisticsExpanded ? ' statistics-expanded' : ''}${isSettingsWindow ? ' settings-window' : ''}`}>
       {isSettingsWindow && <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
@@ -416,6 +426,7 @@ export default function App() {
       </header>}
 
       <main className="main-content" ref={mainContent} onScroll={repositionStatistics}>
+        <div className="window-content" ref={naturalContent}>
         {loading ? (
           <div className="state-panel" role="status"><LoaderCircle className="spin" size={25} /><h1>正在加载</h1><p>{isDesktop ? '读取本地设置与账号用量…' : '读取本地设置…'}</p></div>
         ) : bootError ? (
@@ -462,6 +473,7 @@ export default function App() {
             </form>
           </div>
         ) : null}
+        </div>
       </main>
       <footer className="app-footer"><Monitor size={12} aria-hidden="true" /><span>{isDesktop ? '自动读取本机已登录账号' : '读取本机账号请使用桌面应用'}</span></footer>
     </div>

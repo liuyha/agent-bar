@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "acceptFirstMouse": true,
+        "title": "AgentBar",
+        "width": 360,
+        "height": 600,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true,
+        "shadow": true,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground"],
+          "state": "active",
+          "radius": 12
+        }
+      },
+      {
+        "label": "settings",
+        "title": "AgentBar · 偏好设置",
+        "url": "index.html#settings",
+        "width": 420,
+        "height": 560,
+        "visible": false,
+        "resizable": false,
+        "center": true,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground"],
+          "state": "active"
+        }
+      }
+    ]
+  }
+}

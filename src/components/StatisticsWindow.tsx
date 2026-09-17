@@ -11,6 +11,7 @@ import {
 } from '../lib/panel';
 import { mergeDashboardSnapshot } from '../lib/snapshot';
 import { useAccountStatistics } from '../lib/useAccountStatistics';
+import { useContentWindowHeight } from '../lib/useContentWindowHeight';
 import type { AppSettings, DashboardSnapshot, ProviderId } from '../types';
 import { TokenStatisticsPanel } from './TokenStatisticsPanel';
 
@@ -27,11 +28,19 @@ export default function StatisticsWindow() {
   const [saving, setSaving] = useState(false);
   const [refreshes, setRefreshes] = useState<Partial<Record<ProviderId, number>>>({});
   const root = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const lastInteraction = useRef('');
   const alive = useRef(false);
   const saveLock = useRef(false);
   const account = snapshot?.providers.find((provider) => provider.id === 'codex')?.account;
   const store = useAccountStatistics(settings, account, snapshot !== null);
+
+  const reportHeightError = useCallback((reason: unknown) => {
+    setError(`调整窗口高度失败：${errorMessage(reason)}`);
+  }, []);
+  const syncHeight = useContentWindowHeight({
+    shell: root, content, enabled: Boolean(panel.provider), revision: panel.revision, onError: reportHeightError,
+  });
 
   const acceptSnapshot = useCallback((incoming: DashboardSnapshot) => {
     setSnapshot((current) => mergeDashboardSnapshot(current, incoming));
@@ -128,13 +137,13 @@ export default function StatisticsWindow() {
   useLayoutEffect(() => {
     if (!panel.provider) return;
     let cancelled = false;
-    void presentStatisticsPanel(panel.revision).then(() => {
+    void syncHeight().then(() => { if (!cancelled) return presentStatisticsPanel(panel.revision); }).then(() => {
       if (!cancelled) reportInteraction();
     }).catch((reason: unknown) => {
       if (!cancelled) setError(`显示统计失败：${errorMessage(reason)}`);
     });
     return () => { cancelled = true; };
-  }, [panel.provider, panel.revision, reportInteraction]);
+  }, [panel.provider, panel.revision, reportInteraction, syncHeight]);
 
   useEffect(() => {
     if (!panel.provider || !settings || settings.enabledProviders.includes(panel.provider)) return;
@@ -201,6 +210,7 @@ export default function StatisticsWindow() {
     onWheelCapture={() => reportInteraction('pointer', true)} onMouseMove={() => reportInteraction('pointer', true)} onMouseDownCapture={() => reportInteraction('pointer')}
     onKeyDown={() => { queueMicrotask(() => reportInteraction('keyboard')); }}
     onFocus={() => { queueMicrotask(() => reportInteraction()); }} onBlur={() => { queueMicrotask(() => reportInteraction()); }}>
+    <div ref={content} className="window-content">
     {panel.provider && <>
       {error && <div className="statistics-notice" role="alert"><AlertCircle size={15} aria-hidden="true" /><p>{error}</p><Button type="button" variant="outline" onClick={() => { setError(null); setLoadAttempt((current) => current + 1); }}><RefreshCw size={13} />重新连接</Button></div>}
       {selected && settings ? <TokenStatisticsPanel key={selected.id} provider={selected.id} name={selected.name}
@@ -209,5 +219,6 @@ export default function StatisticsWindow() {
         onPreferencesChange={savePreferences} onClose={closeStatistics} />
         : <aside className="token-statistics" aria-label="使用统计"><div className="statistics-header"><h2>{panel.provider === 'codex' ? 'Codex' : 'Claude'} 使用统计</h2><Button type="button" variant="ghost" size="icon" aria-label="收起 Token 统计" onClick={closeStatistics}><X size={14} /></Button></div><div className="statistics-state" role="status"><LoaderCircle size={22} className="spin" /><p>正在读取使用统计…</p></div></aside>}
     </>}
+    </div>
   </div>;
 }

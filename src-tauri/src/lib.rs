@@ -62,6 +62,8 @@ async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
     let saved = tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
         let saved = state.save_settings(settings)?;
+        #[cfg(target_os = "macos")]
+        update_native_theme(&worker_app);
         if let Err(error) = worker_app.emit("settings-updated", &saved) {
             eprintln!("发送设置更新事件失败：{error}");
         }
@@ -76,6 +78,25 @@ async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
         codex_web::close(&app);
     }
     Ok(saved)
+}
+
+#[cfg(target_os = "macos")]
+fn update_native_theme(app: &AppHandle) {
+    let handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        // Read the latest saved setting on the UI thread so delayed updates
+        // cannot give the native glass a different appearance from the webview.
+        let Ok(settings) = handle.state::<AppState>().settings() else {
+            return;
+        };
+        handle.set_theme(match settings.theme {
+            models::Theme::System => None,
+            models::Theme::Light => Some(tauri::Theme::Light),
+            models::Theme::Dark => Some(tauri::Theme::Dark),
+        });
+    }) {
+        eprintln!("调度窗口主题更新失败：{error}");
+    }
 }
 
 async fn refresh_and_emit(app: AppHandle) -> Result<DashboardSnapshot, String> {
@@ -215,6 +236,16 @@ fn set_panel_interaction(
     }
     panel::interaction_changed(&app, window.label(), hovered, keyboard, &intent)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn resize_content_window(
+    app: AppHandle,
+    window: WebviewWindow,
+    height: f64,
+    revision: Option<u64>,
+) -> Result<(), String> {
+    panel::resize_content_window(&app, &window, height, revision).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -502,6 +533,8 @@ pub fn run() {
             let data_dir = storage::data_dir(&app.path().home_dir()?);
             let state = AppState::load(settings_path, data_dir).map_err(std::io::Error::other)?;
             app.manage(state);
+            #[cfg(target_os = "macos")]
+            update_native_theme(app.handle());
             app.manage(panel::PanelState::default());
             create_tray(app)?;
             #[cfg(target_os = "macos")]
@@ -513,9 +546,15 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "settings" {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    log_result(window.hide());
+                match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        log_result(window.hide());
+                    }
+                    WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                        log_result(panel::settings_monitor_changed(window.app_handle()));
+                    }
+                    _ => {}
                 }
             }
             if matches!(window.label(), "main" | "statistics") {
@@ -548,6 +587,7 @@ pub fn run() {
             hide_statistics_panel,
             dismiss_panel,
             set_panel_interaction,
+            resize_content_window,
             get_statistics_panel_state,
             present_statistics_panel,
             get_cached_token_statistics,
