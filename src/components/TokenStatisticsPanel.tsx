@@ -3,7 +3,7 @@ import { AlertCircle, ChartNoAxesCombined, LoaderCircle, RefreshCw } from 'lucid
 import { Button } from '@/components/ui/button';
 import { NativeSelect } from '@/components/ui/native-select';
 import { getStatisticsState, refreshStatistics, subscribeToStatistics } from '../lib/tokenStatistics';
-import { formatCount, formatPeriodRange, formatTime, formatTokens, formatUsd } from '../lib/format';
+import { formatCount, formatEstimatedCostCny, formatPeriodRange, formatTime, formatTokens, USD_TO_CNY_ESTIMATE_RATE } from '../lib/format';
 import { codexStatisticsSources } from '../lib/settings';
 import type { createAccountStatisticsStore } from '../lib/accountStatistics';
 import { periodLabels } from '../lib/statisticsPeriods';
@@ -33,10 +33,11 @@ export function StatisticsContent({ statistics, loading, error, selectedPeriod =
     <div className="statistics-periods">
       {period ? <section className="statistics-period" key={period.period} aria-label={`${periodLabels[period.period]} Token 统计`}>
         <div className="statistics-period-heading"><h3>{periodLabels[period.period]}</h3><span>{formatPeriodRange(period.startAt, period.endAt, period.period === 'year' || period.period === 'all')}</span></div>
-        <div className="statistics-totals"><div><span>Token 用量</span><strong title={formatCount(period.totalTokens)}>{formatTokens(period.totalTokens)}</strong></div><div className="statistics-cost"><span>约等金额 · USD{period.unpricedTokens > 0 && period.estimatedCostUsd !== null ? '（部分）' : ''}</span><strong className={period.estimatedCostUsd === null ? 'cost-unknown' : undefined}>{formatUsd(period.estimatedCostUsd)}</strong></div></div>
+        <div className="statistics-totals"><div><span>Token 用量</span><strong title={formatCount(period.totalTokens)}>{formatTokens(period.totalTokens)}</strong></div><div className="statistics-cost"><span>约等金额 · 人民币{period.unpricedTokens > 0 && period.estimatedCostUsd !== null ? '（部分）' : ''}</span><strong className={period.estimatedCostUsd === null ? 'cost-unknown' : undefined}>{formatEstimatedCostCny(period.estimatedCostUsd)}</strong></div></div>
         <dl className="statistics-counts"><div><dt>请求数</dt><dd>{period.requestCount === null ? '—' : formatCount(period.requestCount)}<small>次</small></dd></div><div><dt>会话轮次</dt><dd>{period.conversationTurns === null ? '—' : formatCount(period.conversationTurns)}<small>轮</small></dd></div></dl>
         <details className="statistics-token-details"><summary>Token 明细</summary><dl className="statistics-breakdown"><div><dt>输入（含缓存）</dt><dd title={formatCount(period.inputTokens)}>{formatTokens(period.inputTokens)}</dd></div><div><dt>输出</dt><dd title={formatCount(period.outputTokens)}>{formatTokens(period.outputTokens)}</dd></div><div><dt>缓存读取</dt><dd title={formatCount(period.cachedInputTokens)}>{formatTokens(period.cachedInputTokens)}</dd></div>{period.cacheWriteTokens > 0 && <div><dt>缓存写入</dt><dd title={formatCount(period.cacheWriteTokens)}>{formatTokens(period.cacheWriteTokens)}</dd></div>}</dl></details>
         {period.unpricedTokens > 0 && <p className="unpriced-note"><span title={formatCount(period.unpricedTokens)}>{formatTokens(period.unpricedTokens)}</span> Token 缺少可核实单价。{period.estimatedCostUsd === null ? '暂无法估算金额。' : '金额仅含已计价部分。'}</p>}
+        {period.estimatedCostUsd !== null && <p className="statistics-footnote">按固定估算汇率 1 美元 ≈ {USD_TO_CNY_ESTIMATE_RATE} 元人民币换算</p>}
       </section> : <div className="statistics-state" role="status"><p>暂无{periodLabels[selectedPeriod]}统计数据。</p></div>}
     </div>
     <div className="statistics-updated">统计于 {formatTime(statistics.updatedAt)}</div>

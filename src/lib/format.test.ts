@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCount, formatCountdown, formatPeriodRange, formatTokens, formatUsd } from './format';
+import { formatCount, formatCountdown, formatEstimatedCostCny, formatPeriodRange, formatTokens } from './format';
 
 describe('reset countdown', () => {
   const now = Date.parse('2026-09-16T00:00:00Z');
@@ -54,11 +54,14 @@ describe('token and estimated cost formatting', () => {
     expect(formatCount(1234567)).toBe('1,234,567');
     expect(formatCount(1234567890)).toBe('1,234,567,890');
   });
-  it('distinguishes unknown, zero and sub-cent USD amounts', () => {
-    expect(formatUsd(null)).toBe('暂无法估算');
-    expect(formatUsd(Number.NaN)).toBe('暂无法估算');
-    expect(formatUsd(0)).toBe('US$0.00');
-    expect(formatUsd(0.002)).toBe('< US$0.01');
-    expect(formatUsd(1234.567)).toBe('US$1,234.57');
+  it('converts USD estimates to CNY before rounding or checking the one-fen threshold', () => {
+    expect(formatEstimatedCostCny(0)).toBe('¥0.00');
+    expect(formatEstimatedCostCny(0.001)).toBe('< ¥0.01');
+    expect(formatEstimatedCostCny(0.002)).toBe('¥0.01');
+    expect(formatEstimatedCostCny(1)).toBe('¥7.00');
+    expect(formatEstimatedCostCny(1234.567)).toBe('¥8,641.97');
+  });
+  it.each([null, Number.NaN, Infinity, -Infinity, -1, Number.MAX_VALUE])('keeps invalid USD estimates unavailable after conversion: %s', (value) => {
+    expect(formatEstimatedCostCny(value)).toBe('暂无法估算');
   });
 });

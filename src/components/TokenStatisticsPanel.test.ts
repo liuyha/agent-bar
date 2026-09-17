@@ -60,7 +60,7 @@ describe('token statistics', () => {
 
   it('defaults to today with a five-option period selector and one statistics section', () => {
     const html = render();
-    for (const label of ['今日', '本周', '本月', '本年', '全部', '1.5K', 'US$0.05', '请求数', '会话轮次', '缓存读取', '缓存写入']) expect(html).toContain(label);
+    for (const label of ['今日', '本周', '本月', '本年', '全部', '1.5K', '¥0.35', '请求数', '会话轮次', '缓存读取', '缓存写入']) expect(html).toContain(label);
     expect(html).toContain('role="radiogroup" aria-label="统计时段"');
     expect(html.match(/type="radio"/g)).toHaveLength(5);
     expect([...html.matchAll(/<input[^>]*value="([^"]+)"/g)].map((match) => match[1])).toEqual(['day', 'week', 'month', 'year', 'all']);
@@ -75,11 +75,11 @@ describe('token statistics', () => {
   });
 
   it.each([
-    ['day', '今日', '1.5K', 'US$0.05', '12', '3'],
-    ['week', '本周', '3K', 'US$0.10', '24', '6'],
-    ['month', '本月', '4.5K', 'US$0.15', '36', '9'],
-    ['year', '本年', '6K', 'US$0.20', '48', '12'],
-    ['all', '全部', '7.5K', 'US$0.25', '60', '15'],
+    ['day', '今日', '1.5K', '¥0.35', '12', '3'],
+    ['week', '本周', '3K', '¥0.70', '24', '6'],
+    ['month', '本月', '4.5K', '¥1.05', '36', '9'],
+    ['year', '本年', '6K', '¥1.40', '48', '12'],
+    ['all', '全部', '7.5K', '¥1.75', '60', '15'],
   ] as const)('renders only the selected %s period with its own totals and counts', (period, label, tokens, cost, requests, turns) => {
     const html = render(statistics, false, null, period);
     expect(html.match(/class="statistics-period"/g)).toHaveLength(1);
@@ -88,6 +88,9 @@ describe('token statistics', () => {
     const exactTokens = statistics.periods.find((item) => item.period === period)!.totalTokens.toLocaleString('zh-CN');
     expect(html).toContain(`<strong title="${exactTokens}">${tokens}</strong>`);
     expect(html).toContain(cost);
+    expect(html).toContain('约等金额 · 人民币');
+    expect(html).toContain('按固定估算汇率 1 美元 ≈ 7 元人民币换算');
+    expect(html).not.toContain('US$');
     expect(html).toContain(`<dt>请求数</dt><dd>${requests}<small>次</small>`);
     expect(html).toContain(`<dt>会话轮次</dt><dd>${turns}<small>轮</small>`);
   });
@@ -96,15 +99,15 @@ describe('token statistics', () => {
     const unknown = render({ ...statistics, periods: [{ ...statistics.periods[0], estimatedCostUsd: null, unpricedTokens: 1500, requestCount: null, conversationTurns: null }] });
     expect(unknown).toContain('暂无法估算');
     expect(unknown).toContain('缺少可核实单价');
-    expect(unknown).not.toContain('US$0.00');
+    expect(unknown).not.toContain('¥0.00');
     expect(unknown).toContain('—');
     const zero = render({ ...statistics, periods: [{ ...statistics.periods[0], totalTokens: 0, estimatedCostUsd: 0, requestCount: 0, conversationTurns: 0 }] });
-    expect(zero).toContain('US$0.00');
+    expect(zero).toContain('¥0.00');
     expect(zero).not.toContain('暂无法估算');
     const partial = render({ ...statistics, periods: [{ ...statistics.periods[0], unpricedTokens: 200 }] });
     expect(partial).toContain('（部分）');
     expect(partial).toContain('金额仅含已计价部分');
-    expect(partial).toContain('US$0.05');
+    expect(partial).toContain('¥0.35');
   });
 
   it('shows loading, unavailable and failed collection without fabricated totals', () => {

@@ -41,10 +41,16 @@ export function formatCount(value: number): string {
     : '—';
 }
 
-export function formatUsd(value: number | null): string {
-  if (value === null || !Number.isFinite(value) || value < 0) return '暂无法估算';
-  if (value > 0 && value < 0.01) return '< US$0.01';
-  return `US$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Fixed approximation for estimates, not a live or historical exchange rate.
+// Keep model prices and cached totals in USD; convert only for display.
+export const USD_TO_CNY_ESTIMATE_RATE = 7;
+
+export function formatEstimatedCostCny(valueUsd: number | null): string {
+  if (valueUsd === null || !Number.isFinite(valueUsd) || valueUsd < 0) return '暂无法估算';
+  const valueCny = valueUsd * USD_TO_CNY_ESTIMATE_RATE;
+  if (!Number.isFinite(valueCny)) return '暂无法估算';
+  if (valueCny > 0 && valueCny < 0.01) return '< ¥0.01';
+  return `¥${valueCny.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function formatPeriodRange(startAt: string, endAt: string, includeYear = false): string {
