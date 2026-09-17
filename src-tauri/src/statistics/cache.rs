@@ -261,6 +261,13 @@ pub(super) fn can_append(path: &Path, previous: &Checkpoint) -> io::Result<bool>
     if !cfg!(unix) {
         return Ok(false);
     }
+    unchanged_prefix(path, previous)
+}
+
+/// Validate the sampled prefix during a single scan on every platform. A file may grow
+/// while it is being read, but previously observed bytes must remain unchanged. This does
+/// not grant permission to reuse a cached parse without the stable identity can_append needs.
+pub(super) fn unchanged_prefix(path: &Path, previous: &Checkpoint) -> io::Result<bool> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     if previous.offset > previous.len
@@ -291,7 +298,6 @@ pub(super) fn can_append(path: &Path, previous: &Checkpoint) -> io::Result<bool>
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
     use std::io::Write;
 
     #[test]
@@ -425,6 +431,45 @@ mod tests {
     }
 
     #[test]
+    fn scan_validation_accepts_unchanged_files_and_appends_on_every_platform() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"{\"n\":1}\n{\"n\":").unwrap();
+        let before = checkpoint(&path, 8).unwrap();
+        assert!(unchanged_prefix(&path, &before).unwrap());
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"2}\n")
+            .unwrap();
+        assert!(unchanged_prefix(&path, &before).unwrap());
+    }
+
+    #[test]
+    fn scan_validation_rejects_truncation_and_rewrites_on_every_platform() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"first record\n").unwrap();
+        let before = checkpoint(&path, 13).unwrap();
+        fs::write(&path, b"short\n").unwrap();
+        assert!(!unchanged_prefix(&path, &before).unwrap());
+        fs::write(&path, b"other record\nmore\n").unwrap();
+        assert!(!unchanged_prefix(&path, &before).unwrap());
+    }
+
+    #[test]
+    #[cfg(not(unix))]
+    fn a_valid_scan_still_cannot_reuse_cached_parses_without_stable_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"{}\n").unwrap();
+        let before = checkpoint(&path, 3).unwrap();
+        assert!(unchanged_prefix(&path, &before).unwrap());
+        assert!(!can_append(&path, &before).unwrap());
+    }
+
+    #[test]
     #[cfg(unix)]
     fn truncation_replacement_and_rewrites_force_reparse() {
         let directory = tempfile::tempdir().unwrap();
@@ -442,7 +487,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn changed_middle_with_same_length_forces_reparse_via_mtime() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
@@ -453,11 +497,12 @@ mod tests {
         let mut file = fs::OpenOptions::new().write(true).open(&path).unwrap();
         file.seek(SeekFrom::Start(16_384)).unwrap();
         file.write_all(b"y").unwrap();
-        assert!(!can_append(&path, &before).unwrap());
+        // Windows publishes the final last-write timestamp when the writer closes.
+        drop(file);
+        assert!(!unchanged_prefix(&path, &before).unwrap());
     }
 
     #[test]
-    #[cfg(unix)]
     fn interior_rewrite_followed_by_append_forces_reparse() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
@@ -468,7 +513,8 @@ mod tests {
         file.write_all(b"y").unwrap();
         file.seek(SeekFrom::End(0)).unwrap();
         file.write_all(b"new record\n").unwrap();
-        assert!(!can_append(&path, &before).unwrap());
+        drop(file);
+        assert!(!unchanged_prefix(&path, &before).unwrap());
     }
 
     #[test]

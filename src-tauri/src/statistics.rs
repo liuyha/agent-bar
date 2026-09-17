@@ -225,8 +225,8 @@ fn collect_persisted(
     if cache.store.is_none() {
         cache.store = Some(cache::Store::open(&store_path)?);
     }
-    // The persisted records are authoritative on every load and refresh, including after a
-    // process restart. Only changed source logs need to be parsed again.
+    // Restore persisted records on every refresh, including after a process restart.
+    // Reuse unchanged logs only where their identity is reliable; otherwise rescan safely.
     cache.files.clear();
     let statistics = collect_roots(provider, roots, windows, cache);
     if let Some(error) = &cache.cache_error {
@@ -613,7 +613,9 @@ fn parse_incremental_codex(path: &Path, prior: Option<CachedFile>) -> std::io::R
     file.seek(SeekFrom::Start(offset))?;
     codex_history::parse_append(&mut BufReader::new(file), path, &mut parsed)?;
     let offset = parsed.codex_state.as_ref().map_or(0, |state| state.offset);
-    if !cache::can_append(path, &before)? {
+    // A full scan must also work on platforms where cached-prefix reuse is
+    // disabled. Validate this read independently of the reuse policy.
+    if !cache::unchanged_prefix(path, &before)? {
         return Err(std::io::Error::new(
             std::io::ErrorKind::WouldBlock,
             "日志在扫描期间被重写",
@@ -977,6 +979,41 @@ mod tests {
                 json!({"type":"user","timestamp":timestamp,"uuid":id,"message":{"content":"hello"}}),
                 json!({"type":"assistant","timestamp":timestamp,"message":{"id":id,"model":"claude-sonnet-4-6","usage":{"input_tokens":40,"cache_read_input_tokens":40,"cache_creation_input_tokens":20,"output_tokens":10}}}),
             ],
+        }
+    }
+
+    #[test]
+    fn codex_full_scan_validates_reads_independently_of_cache_reuse() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        write_log(
+            &path,
+            &known_turn(ProviderId::Codex, "2026-09-16T09:01:00Z", "first"),
+        );
+
+        let first = parse_incremental_codex(&path, None)
+            .expect("a stable Codex file must support a complete scan on every platform");
+        let checkpoint = first.checkpoint.as_ref().unwrap();
+        assert!(cache::unchanged_prefix(&path, checkpoint).unwrap());
+        #[cfg(not(unix))]
+        assert!(!cache::can_append(&path, checkpoint).unwrap());
+        assert_eq!(first.parsed.events[0].usage.total(), 110);
+
+        write_log(
+            &path,
+            &known_turn(ProviderId::Codex, "2026-09-16T09:02:00Z", "replacement"),
+        );
+        let mut cache = FileCache::default();
+        for _ in 0..2 {
+            let result = collect_roots(
+                ProviderId::Codex,
+                &[directory.path().into()],
+                &windows(),
+                &mut cache,
+            );
+            assert_eq!(result.status, ProviderStatus::Ready, "{:?}", result.message);
+            assert_eq!(result.periods[0].total_tokens, 110);
+            assert_eq!(result.periods[0].request_count, Some(1));
         }
     }
 
@@ -1771,7 +1808,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_statistics_restore_both_providers_without_reparsing_unchanged_logs() {
+    fn persisted_statistics_restore_both_providers_with_platform_appropriate_reuse() {
         for (provider, name) in [(ProviderId::Codex, "codex"), (ProviderId::Claude, "claude")] {
             let directory = tempdir().unwrap();
             let logs = directory.path().join("logs");
@@ -1805,8 +1842,9 @@ mod tests {
                     .unwrap();
             connection
                 .execute_batch(
-                    "CREATE TRIGGER reject_reparse BEFORE INSERT ON normalized_usage
-                     BEGIN SELECT RAISE(ABORT, 'unchanged logs must use persisted usage'); END;",
+                    "CREATE TABLE refresh_writes (path BLOB NOT NULL);
+                     CREATE TRIGGER track_reparse BEFORE INSERT ON normalized_usage
+                     BEGIN INSERT INTO refresh_writes (path) VALUES (NEW.path); END;",
                 )
                 .unwrap();
             // A memory-only mutation must not survive the next read from the data directory.
@@ -1819,6 +1857,16 @@ mod tests {
                 collect(&mut FileCache::default()).unwrap().periods[4].total_tokens,
                 110
             );
+            let writes: i64 = connection
+                .query_row("SELECT COUNT(*) FROM refresh_writes", [], |row| row.get(0))
+                .unwrap();
+            let expected_writes = if provider == ProviderId::Codex && !cfg!(unix) {
+                // Without a stable file identity, both refreshes intentionally rescan.
+                2
+            } else {
+                0
+            };
+            assert_eq!(writes, expected_writes);
             let bytes: Vec<u8> = connection
                 .query_row("SELECT parsed FROM normalized_usage", [], |row| row.get(0))
                 .unwrap();
