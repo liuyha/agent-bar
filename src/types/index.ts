@@ -16,6 +16,19 @@ export interface UsageWindow {
   resetsAt: string | null;
 }
 
+export interface ResetCredit {
+  id: string;
+  remaining: number;
+  expiresAt: string | null;
+}
+
+export interface ResetCredits {
+  remaining: number | null;
+  credits: ResetCredit[] | null;
+  updatedAt: string | null;
+  message: string | null;
+}
+
 export interface ProviderUsage {
   id: ProviderId;
   name: string;
@@ -26,6 +39,7 @@ export interface ProviderUsage {
   message: string | null;
   windows: UsageWindow[];
   updatedAt: string | null;
+  resetCredits?: ResetCredits | null;
 }
 
 export interface DashboardSnapshot {

@@ -246,6 +246,7 @@ fn preserve_last_usage(current: &mut ProviderUsage, previous: &ProviderUsage) {
     current.account = previous.account.clone();
     current.plan = previous.plan.clone();
     current.updated_at = previous.updated_at.clone();
+    current.reset_credits = previous.reset_credits.clone();
 }
 
 fn restore_snapshot(path: &Path, settings: &AppSettings) -> DashboardSnapshot {
@@ -597,6 +598,16 @@ mod tests {
                 resets_at: Some("2026-09-17T06:00:00Z".into()),
             }],
             updated_at: Some("2026-09-17T01:00:00Z".into()),
+            reset_credits: Some(crate::models::ResetCredits {
+                remaining: Some(2),
+                credits: Some(vec![crate::models::ResetCredit {
+                    id: "reset-credit".into(),
+                    remaining: 1,
+                    expires_at: Some("2026-10-04T02:33:50Z".into()),
+                }]),
+                updated_at: Some("2026-09-17T01:00:00Z".into()),
+                message: None,
+            }),
             cache_scope: Some("same-login".into()),
             ..pending_provider(ProviderId::Codex)
         }
@@ -631,6 +642,7 @@ mod tests {
         assert_eq!(retained.account, before.providers[0].account);
         assert_eq!(retained.plan, before.providers[0].plan);
         assert_eq!(retained.updated_at, before.providers[0].updated_at);
+        assert_eq!(retained.reset_credits, before.providers[0].reset_credits);
         // The scope digest is persisted privately, never exposed in dashboard IPC.
         assert!(!serde_json::to_string(&failed)
             .unwrap()

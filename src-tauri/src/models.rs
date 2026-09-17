@@ -119,6 +119,25 @@ pub struct UsageWindow {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResetCredit {
+    pub id: String,
+    pub remaining: u64,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredits {
+    /// None means the service did not return a confirmed available balance.
+    pub remaining: Option<u64>,
+    /// None means details are unavailable; an empty vector is a confirmed empty list.
+    pub credits: Option<Vec<ResetCredit>>,
+    pub updated_at: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderUsage {
     pub id: ProviderId,
     pub name: String,
@@ -129,6 +148,8 @@ pub struct ProviderUsage {
     pub message: Option<String>,
     pub windows: Vec<UsageWindow>,
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub reset_credits: Option<ResetCredits>,
     /// Credential scope stays inside Rust and its private disk envelope, never IPC.
     #[serde(skip)]
     pub(crate) cache_scope: Option<String>,

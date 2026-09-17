@@ -25,6 +25,7 @@ AgentBar 使用 Tauri 连接 React 界面与 Rust 采集层。React 负责展示
 Rust 与 TypeScript 使用 camelCase JSON 契约。字段变更需同步两端模型及消费者。
 
 - `ProviderUsage` 包含服务、账号、套餐、状态、额度窗口和采集时间。`status` 为 `ready`、`unavailable` 或 `error`；未登录和不支持的认证模式为不可用。窗口只包含实际返回的 `label`、`usedPercent` 和可空的 `resetsAt`，不伪造缺失额度。
+- Codex 套餐依据实际 `plan_type` / `planType` 展示：`prolite` 为 `Pro 5x`，`pro` 为 `Pro 20x`。`resetCredits` 包含可空总数 `remaining`、可空明细 `credits`、独立采集时间 `updatedAt` 和提示 `message`；每项明细包含 `id`、`remaining`、可空的 `expiresAt`。旧快照缺少该字段时视为未知；`null` 与确认返回的零次 / 空列表区分。
 - `DashboardSnapshot` 包含 `providers`、采集尝试时间 `updatedAt`、`mode: live` 和单调递增的 `revision`。前端拒绝较低版本，防止事件与命令返回乱序覆盖。
 - `AppSettings` 默认启用两个服务、300 秒刷新、跟随系统主题和本机统计。支持 60 / 300 / 900 秒刷新、system / light / dark 主题；`codexStatisticsSource` 为 local / auto，旧版显式认证来源迁移为 auto。
 - `TokenStatistics` 与服务端 `AccountUsageSnapshot` 是独立契约。可空计数、价格和日期表示未知，与真实零值区分；两类统计不相加、不互相补零。
@@ -44,6 +45,8 @@ Rust 与 TypeScript 使用 camelCase JSON 契约。字段变更需同步两端�
 ## 认证与刷新
 
 Codex 读取 `$CODEX_HOME/auth.json`，默认目录为 `~/.codex`。采集依次使用可用 PAT、OAuth 和受控的官方 CLI 回退。PAT 先确认身份，OAuth 使用当前凭据的账号 ID；显式配置目录不借用其他目录的身份。网络错误、服务端错误和限流不触发额外 CLI 请求。自定义 backend 交给同一配置范围的 CLI 处理，HTTP 路径不向任意配置地址转发令牌。额度 CLI 调用使用 `account/read` 与 `account/rateLimits/read`，不启动模型任务，也不由 AgentBar 写回共享凭据文件。
+
+Codex 重置总数使用 `/wham/usage` 的 `rate_limit_reset_credits.available_count`；`applicable_available_count` 表示当前可兑换次数，不作为剩余数量展示。HTTP 另外只读请求 `/wham/rate-limit-reset-credits` 获取状态和到期时间，CLI 读取 `rateLimitResetCredits`。重置明细失败不影响已获取的额度窗口及已知总数，明细可能截断，不能用列表长度覆盖服务端总数。卡片点击“重置剩余”展开列表，按到期时间升序、以本机时区展示完整日期和时分；已知明细到期后从显示总数扣除，未知到期时间保留为未知。此入口只查看，不兑换或消费重置次数。
 
 Claude 使用 Claude Code 已有的订阅 OAuth 登录态。macOS 优先读 Keychain，再回退到本地凭据文件；其他平台使用本地文件，尊重 `CLAUDE_CONFIG_DIR`。API key 和代理模式不提供订阅额度。凭据只在 Rust / 官方 CLI 内处理，前端接收账号元信息、归一用量和脱敏错误。
 

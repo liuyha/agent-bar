@@ -18,6 +18,7 @@ use super::{
 };
 
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 pub(super) const WHOAMI_URL: &str =
     "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami";
 
@@ -109,7 +110,7 @@ fn fetch_with(
     now: DateTime<Utc>,
     mut get: impl FnMut(&str, &str, Option<&str>, bool) -> Result<Value, FetchError>,
 ) -> Result<ProviderUsage, FetchError> {
-    let (response, email, fallback_plan) = match credential {
+    let (response, email, fallback_plan, token, account, pat) = match credential {
         Credential::Pat(token) => {
             let whoami = get(WHOAMI_URL, token, None, true)?;
             if !whoami.is_object() {
@@ -121,6 +122,9 @@ fn fetch_with(
                 response,
                 nonempty(whoami.get("email")),
                 nonempty(whoami.get("chatgpt_plan_type")),
+                token,
+                account,
+                true,
             )
         }
         Credential::OAuth(oauth) => (
@@ -132,9 +136,21 @@ fn fetch_with(
             )?,
             oauth.email.clone(),
             oauth.plan.clone(),
+            oauth.access_token.as_str(),
+            oauth.account_id.clone(),
+            false,
         ),
     };
-    map_usage(&response, email, fallback_plan.as_deref(), now)
+    let mut usage = map_usage(&response, email, fallback_plan.as_deref(), now)?;
+    // Reset details are supplementary. Their failure cannot erase a valid
+    // quota snapshot or cause a fallback to a different account's credentials.
+    match get(RESET_CREDITS_URL, token, account.as_deref(), pat) {
+        Ok(details) => {
+            super::reset_credits::apply_http_details(&mut usage.reset_credits, &details, now)
+        }
+        Err(_) => super::reset_credits::mark_details_unavailable(&mut usage.reset_credits),
+    }
+    Ok(usage)
 }
 
 fn map_usage(
@@ -154,6 +170,11 @@ fn map_usage(
             .or(fallback_plan),
     );
     usage.account = email;
+    usage.reset_credits = super::reset_credits::summary(
+        response.get("rate_limit_reset_credits"),
+        super::reset_credits::WireFormat::Http,
+        now,
+    );
     let mut malformed = false;
     let mut core = Vec::new();
     if let Some(limit) = response.get("rate_limit").filter(|value| !value.is_null()) {
@@ -323,13 +344,31 @@ mod tests {
             if url == WHOAMI_URL {
                 assert!(account.is_none());
                 Ok(json!({"chatgpt_account_id":"pat-account","email":"pat@example.test","chatgpt_plan_type":"plus"}))
+            } else if url == RESET_CREDITS_URL {
+                assert_eq!(account, Some("pat-account"));
+                Ok(json!({"available_count":2,"credits":[
+                    {"id":"reset-a","status":"available","expires_at":"2027-10-04T02:33:50Z"},
+                    {"id":"reset-b","status":"available","expires_at":"2027-10-05T04:19:47Z"}
+                ]}))
             } else {
                 assert_eq!(account, Some("pat-account")); Ok(response())
             }
         }).unwrap();
-        assert_eq!(calls, vec![WHOAMI_URL, USAGE_URL]);
+        assert_eq!(calls, vec![WHOAMI_URL, USAGE_URL, RESET_CREDITS_URL]);
         assert_eq!(usage.account.as_deref(), Some("pat@example.test"));
-        assert_eq!(usage.plan, "Pro");
+        assert_eq!(usage.plan, "Pro 20x");
+        assert_eq!(usage.reset_credits.as_ref().unwrap().remaining, Some(2));
+        assert_eq!(
+            usage
+                .reset_credits
+                .as_ref()
+                .unwrap()
+                .credits
+                .as_ref()
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(usage.windows.len(), 4);
         assert_eq!(usage.windows[0].label, "5 小时用量");
         assert_eq!(usage.windows[1].label, "每周用量");
@@ -338,6 +377,52 @@ mod tests {
             usage.windows[0].resets_at.as_deref(),
             Some("2026-09-19T08:10:00Z")
         );
+    }
+
+    #[test]
+    fn supplementary_credit_failure_preserves_quota_and_confirmed_balance() {
+        let credentials = super::super::auth::parse(
+            &serde_json::to_vec(&json!({
+                "tokens":{"access_token":"synthetic-oauth","account_id":"oauth-account"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let oauth = credentials.oauth.as_ref().unwrap();
+        for error in [
+            FetchError::Unauthorized,
+            FetchError::Network,
+            FetchError::InvalidResponse,
+        ] {
+            let mut calls = Vec::new();
+            let usage = fetch_with(
+                Credential::OAuth(oauth),
+                Utc::now(),
+                |url, token, account, pat| {
+                    calls.push(url.to_owned());
+                    assert_eq!(token, "synthetic-oauth");
+                    assert_eq!(account, Some("oauth-account"));
+                    assert!(!pat);
+                    if url == USAGE_URL {
+                        let mut response = response();
+                        response["rate_limit_reset_credits"] =
+                            json!({"available_count":2,"applicable_available_count":0});
+                        Ok(response)
+                    } else {
+                        assert_eq!(url, RESET_CREDITS_URL);
+                        Err(error)
+                    }
+                },
+            )
+            .unwrap();
+            assert_eq!(calls, [USAGE_URL, RESET_CREDITS_URL]);
+            assert_eq!(usage.status, ProviderStatus::Ready);
+            assert_eq!(usage.windows.len(), 4);
+            let credits = usage.reset_credits.unwrap();
+            assert_eq!(credits.remaining, Some(2));
+            assert!(credits.credits.is_none());
+            assert!(credits.message.is_some());
+        }
     }
 
     #[test]

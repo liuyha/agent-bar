@@ -172,6 +172,25 @@ svg { flex-shrink: 0; }
 .usage-label { overflow-wrap: anywhere; }
 .usage-number { font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-reset { flex-shrink: 0; color: var(--muted); font-size: 9px; line-height: 1.5; text-align: right; white-space: nowrap; }
+.reset-credits { margin-top: 12px; border-top: 1px solid var(--line); font-size: 10px; }
+.reset-credits-toggle { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 0 2px; cursor: pointer; list-style: none; border-radius: 3px; }
+.reset-credits-toggle::-webkit-details-marker { display: none; }
+.reset-credits-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.reset-credits-label, .reset-credits-count { display: inline-flex; align-items: center; gap: 5px; }
+.reset-credits-label { color: var(--secondary); }
+.reset-credits-count { color: var(--text); white-space: nowrap; }
+.reset-credits-count strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.reset-credits-count > svg { color: var(--muted); }
+.reset-credits[open] .reset-credits-count > svg { transform: rotate(180deg); }
+.reset-credits-content { margin-top: 9px; padding: 9px; background: var(--subtle-bg); border-radius: 6px; }
+.reset-credits-heading { display: flex; justify-content: space-between; gap: 8px; color: var(--secondary); font-size: 9px; }
+.reset-credits-heading > span { color: var(--muted); }
+.reset-credits-list { list-style: none; padding: 0; margin: 5px 0 0; max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.reset-credits-list > li { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 7px 0; line-height: 1.5; }
+.reset-credits-list > li + li { border-top: 1px solid var(--line); }
+.reset-credit-quantity { flex-shrink: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.reset-credit-expiry { text-align: right; color: var(--secondary); font-size: 9px; overflow-wrap: anywhere; }
+.reset-credits-notice { margin: 8px 0 0; color: var(--secondary); line-height: 1.7; overflow-wrap: anywhere; }
 .update-status { display: flex; align-items: center; gap: 4px; margin: 10px 1px 12px; color: var(--muted); font-size: 9px; min-height: 14px; }
 .app-footer { display: flex; align-items: center; justify-content: center; gap: 5px; border-top: 1px solid var(--line); color: var(--muted); padding-top: 12px; margin-top: 8px; font-size: 9px; }
 .app-footer svg { opacity: .65; }

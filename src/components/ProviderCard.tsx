@@ -1,6 +1,7 @@
 import { Clock3, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { ResetCreditsDetails } from './ResetCreditsDetails';
 import { formatCountdown, formatTime } from '../lib/format';
 import type { ProviderUsage } from '../types';
 
@@ -70,6 +71,7 @@ export function ProviderCard({ provider, now, active = false, onShowStatistics, 
           );
         })}
       </div>}
+      {provider.id === 'codex' && (provider.status !== 'unavailable' || provider.resetCredits != null) && <ResetCreditsDetails key={provider.account} value={provider.resetCredits} now={now} />}
       {onRefresh && <div className="provider-update-status" aria-live="polite"><Clock3 size={11} aria-hidden="true" /><span>{refreshing ? `正在刷新 ${provider.name}…` : provider.updatedAt ? `${stale ? '上次更新于' : '更新于'} ${formatTime(provider.updatedAt)}` : '尚未获取用量'}</span></div>}
     </article>
   );

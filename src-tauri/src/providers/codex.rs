@@ -7,6 +7,7 @@
 mod activity;
 mod auth;
 mod http;
+mod reset_credits;
 
 pub(crate) use activity::{
     account_statistics_cache_scope_key, account_statistics_scope_key, collect_account_statistics,
@@ -187,6 +188,7 @@ fn unavailable(message: &str) -> ProviderUsage {
         message: Some(message.into()),
         windows: vec![],
         updated_at: None,
+        reset_credits: None,
         cache_scope: None,
     }
 }
@@ -224,6 +226,11 @@ fn apply_limits(
     result: &Value,
     now: DateTime<Utc>,
 ) -> Result<(), String> {
+    usage.reset_credits = reset_credits::summary(
+        result.get("rateLimitResetCredits"),
+        reset_credits::WireFormat::Cli,
+        now,
+    );
     let mut buckets = Vec::new();
     if let Some(by_id) = result.get("rateLimitsByLimitId").and_then(Value::as_object) {
         // Prefer the current multi-bucket response over the legacy duplicate.
@@ -320,8 +327,10 @@ fn plan_label(plan: Option<&str>) -> String {
         Some("free_workspace") => "Free Workspace",
         Some("go") => "Go",
         Some("plus") => "Plus",
-        Some("pro") => "Pro",
-        Some("prolite") => "Pro Lite",
+        // The native Codex billing UI maps the two Pro plan identifiers to
+        // their subscription multipliers, independently of temporary promos.
+        Some("pro") => "Pro 20x",
+        Some("prolite") => "Pro 5x",
         Some("team") => "Team",
         Some("business" | "self_serve_business_prolite" | "self_serve_business_usage_based") => {
             "Business"
@@ -576,6 +585,27 @@ mod tests {
 
     fn account() -> Value {
         json!({ "account": { "type": "chatgpt", "email": "user@example.com", "planType": "pro" } })
+    }
+
+    #[test]
+    fn pro_subscription_multipliers_match_native_plan_identifiers() {
+        assert_eq!(plan_label(Some("pro")), "Pro 20x");
+        assert_eq!(plan_label(Some("prolite")), "Pro 5x");
+        assert_eq!(plan_label(Some("plus")), "Plus");
+        assert_eq!(plan_label(None), "ChatGPT");
+    }
+
+    #[test]
+    fn cli_rate_limits_include_reset_credit_balance_and_details() {
+        let mut usage = parse_account(&account()).unwrap();
+        apply_limits(&mut usage, &json!({
+            "rateLimits":{"planType":"prolite","primary":{"usedPercent":25}},
+            "rateLimitResetCredits":{"availableCount":3,"credits":[{"id":"reset","status":"available","expiresAt":1790000000}]}
+        }), DateTime::from_timestamp(1789650000, 0).unwrap()).unwrap();
+        assert_eq!(usage.plan, "Pro 5x");
+        let resets = usage.reset_credits.unwrap();
+        assert_eq!(resets.remaining, Some(3));
+        assert_eq!(resets.credits.unwrap().len(), 1);
     }
 
     #[test]
@@ -919,6 +949,17 @@ mod tests {
             "Codex status={:?}, plan={}, account={account:?}, windows={:?}",
             usage.status, usage.plan, usage.windows
         );
+        if let Some(credits) = &usage.reset_credits {
+            println!(
+                "Codex reset remaining={:?}, expiries={:?}, message={:?}",
+                credits.remaining,
+                credits.credits.as_ref().map(|credits| credits
+                    .iter()
+                    .map(|credit| &credit.expires_at)
+                    .collect::<Vec<_>>()),
+                credits.message,
+            );
+        }
         assert_eq!(
             usage.status,
             ProviderStatus::Ready,

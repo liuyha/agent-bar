@@ -15,6 +15,49 @@ function render(overrides: Partial<ProviderUsage> = {}): string {
 }
 
 describe('account usage states', () => {
+  it.each(['Pro 5x', 'Pro 20x'])('shows the precise %s subscription and an expandable reset count with expiry', (plan) => {
+    const html = render({ plan, resetCredits: {
+      remaining: 2, updatedAt: account.updatedAt, message: null,
+      credits: [
+        { id: 'one', remaining: 1, expiresAt: '2026-10-01T00:00:00Z' },
+        { id: 'two', remaining: 1, expiresAt: '2026-11-01T00:00:00Z' },
+      ],
+    } });
+    expect(html).toContain(plan);
+    expect(html).toContain('<details class="reset-credits">');
+    expect(html).toContain('Codex 重置剩余 2 次，查看重置次数列表');
+    expect(html).toContain('重置次数列表');
+    expect(html).toContain('2026/10/01');
+    expect(html).toContain('2026/11/01');
+    expect(html).toContain('<span>过期时间</span>');
+  });
+
+  it('distinguishes zero reset credits from missing data, and only shows them for connected Codex accounts', () => {
+    expect(render({ resetCredits: { remaining: 0, credits: [], updatedAt: account.updatedAt, message: null } })).toContain('暂无可用重置次数');
+    const unknown = render({ resetCredits: null });
+    expect(unknown).toContain('重置剩余数量未知');
+    expect(unknown).not.toContain('暂无可用重置次数');
+    expect(render({ id: 'claude' })).not.toContain('reset-credits');
+    expect(render({ status: 'unavailable' })).not.toContain('reset-credits');
+  });
+
+  it('keeps a known reset count when its expiry list is unavailable', () => {
+    const html = render({ resetCredits: { remaining: 2, credits: null, updatedAt: null, message: '重置次数明细暂不可用' } });
+    expect(html).toContain('Codex 重置剩余 2 次');
+    expect(html).toContain('重置次数明细暂不可用');
+    expect(html).not.toContain('暂无可用重置次数');
+  });
+
+  it('shows confirmed reset credits even when the account has no quota windows', () => {
+    const html = render({ status: 'unavailable', windows: [], resetCredits: {
+      remaining: 1, updatedAt: account.updatedAt, message: null,
+      credits: [{ id: 'one', remaining: 1, expiresAt: '2026-10-01T00:00:00Z' }],
+    } });
+    expect(html).toContain('Codex 重置剩余 1 次');
+    expect(html).toContain('2026/10/01');
+    expect(html).not.toContain('role="progressbar"');
+  });
+
   it('keeps refresh progress and cached usage in the targeted card without repeating the top-level error', () => {
     const html = renderToStaticMarkup(createElement(ProviderCard, { provider: account, now: 0, onRefresh: () => {}, refreshing: true, refreshError: '本卡片刷新失败' }));
     expect(html).toContain('aria-label="刷新 Codex 用量"');

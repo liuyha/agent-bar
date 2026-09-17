@@ -70,6 +70,7 @@ fn empty_usage() -> ProviderUsage {
         message: None,
         windows: Vec::new(),
         updated_at: None,
+        reset_credits: None,
         cache_scope: None,
     }
 }
