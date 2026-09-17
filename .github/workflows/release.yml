@@ -4,18 +4,12 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: '已推送的版本标签，例如 v0.1.0'
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          ref: refs/tags/${{ github.ref_name }}
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
@@ -39,7 +33,7 @@ jobs:
       - name: Validate tag and all application versions
         id: version
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/check-release-version.mjs
       - name: Record immutable source commit
         id: commit

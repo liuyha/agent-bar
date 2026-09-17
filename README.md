@@ -84,7 +84,7 @@ pnpm desktop:build
 
 产物位于 `src-tauri/target/release/bundle/`，安装包格式随构建平台而定。该命令构建本机平台的应用，不代表已完成签名或其他平台验证。
 
-维护者可通过版本标签触发 GitHub Actions，在云端为 macOS、Windows 和 Linux 分别生成 x86_64、ARM64 安装包，共六种目标，并汇总到 Release 草稿，无需持有各平台电脑。操作步骤见 [自动构建与发布](docs/releasing.md)。
+维护者仅在推送 `v*` 版本标签时触发 GitHub Actions，在云端为 macOS、Windows 和 Linux 分别生成 x86_64、ARM64 安装包，共六种目标，并汇总到 Release 草稿，无需持有各平台电脑。分支推送和 Pull Request 不触发工作流。操作步骤见 [自动构建与发布](docs/releasing.md)。
 
 仅预览前端时可运行 `pnpm dev`，打开 `http://127.0.0.1:1420`；偏好设置地址为 `/#settings`。浏览器预览不需要 Rust，也无法读取本机账号或会话日志，会显示桌面端使用提示。
 
@@ -121,7 +121,7 @@ pnpm desktop:build
 | `pnpm release:check` | 检查发布版本在四处配置中保持一致 |
 | `pnpm desktop:build` | 构建当前平台桌面应用 |
 
-提交前运行与改动相关的检查；涉及原生窗口、托盘或账号读取时，还需在桌面端验证。依赖变更应同步维护对应的 `pnpm-lock.yaml` 或 `src-tauri/Cargo.lock`。CI 配置见 [检查工作流](.github/workflows/ci.yml)。
+提交前运行与改动相关的检查；涉及原生窗口、托盘或账号读取时，还需在桌面端验证。依赖变更应同步维护对应的 `pnpm-lock.yaml` 或 `src-tauri/Cargo.lock`。[Release 工作流](.github/workflows/release.yml) 在推送 `v*` 标签时执行前端检查、六种目标的 Rust 检查与测试，然后打包发布草稿。
 
 ```text
 src/                 React 界面、状态管理与 Tauri 通信
