@@ -43,7 +43,7 @@ describe('account statistics content', () => {
     expect(html).toContain(`<dd title="${total}">${total}</dd>`);
     expect(html).toContain(`<dd title="${period === 'all' ? 500 : 64}">${period === 'all' ? 500 : 64}</dd>`);
     expect([...html.matchAll(/<time>([^<]+)<\/time>/g)].map((match) => match[1])).toEqual(dates);
-    expect(html).toContain('<summary>账号活动概览</summary>');
+    expect(html).toContain('aria-label="账号活动概览"');
     expect(html).toContain('2 分 5 秒');
     expect(html).not.toContain(period === 'all' ? '每日记录可能仅覆盖部分历史' : '可能不完整');
   });

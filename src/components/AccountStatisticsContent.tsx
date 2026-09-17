@@ -52,13 +52,13 @@ export function AccountStatisticsContent({ statistics, loading, refreshing, erro
     : busy ? loading ? '正在读取服务端统计…' : '暂无本地缓存，正在后台获取服务端统计…' : statistics?.message || '暂无服务端统计缓存。';
   return <>
     {failure ? <StatisticsErrorNotice message={`更新失败：${failure}${ready ? ' 当前显示本地缓存。' : ''}`} busy={busy} onRetry={onRetry} /> : statusMessage && <p className="statistics-notice" role="status">{statusMessage}</p>}
-    <StatisticsPeriodSwitch selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
-    <AccountPeriodStatistics statistics={ready ? statistics : null} selectedPeriod={selectedPeriod} />
-    <details className="account-statistics-details"><summary>账号活动概览</summary><dl className="account-statistics-metrics account-activity-metrics">
+    <dl className="account-statistics-metrics account-activity-metrics" aria-label="账号活动概览">
       <div><dt>最长任务时长</dt><dd>{formatDuration(summary?.longestRunningTurnSec ?? null)}</dd></div>
       <div><dt>当前连续活跃</dt><dd>{number(summary?.currentStreakDays ?? null, ' 天')}</dd></div>
       <div><dt>最长连续活跃</dt><dd>{number(summary?.longestStreakDays ?? null, ' 天')}</dd></div>
-    </dl></details>
+    </dl>
+    <StatisticsPeriodSwitch selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
+    <AccountPeriodStatistics statistics={ready ? statistics : null} selectedPeriod={selectedPeriod} />
     <div className="account-statistics-timestamps">
       <div className="statistics-updated">服务端更新于 {fullTime(ready ? statistics.serviceUpdatedAt : null)}</div>
       <div className="statistics-updated">采集于 {fullTime(ready ? statistics.updatedAt : null)}</div>
