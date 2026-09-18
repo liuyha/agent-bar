@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings-window-drag",
+  "description": "Allow the preferences window's custom title bar to drag and handle native title-bar double clicks.",
+  "windows": ["settings"],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}

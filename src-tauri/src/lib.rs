@@ -523,15 +523,9 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "settings" {
-                match event {
-                    WindowEvent::CloseRequested { api, .. } => {
-                        api.prevent_close();
-                        log_result(window.hide());
-                    }
-                    WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                        log_result(panel::settings_monitor_changed(window.app_handle()));
-                    }
-                    _ => {}
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    log_result(window.hide());
                 }
             }
             if matches!(window.label(), "main" | "statistics") {

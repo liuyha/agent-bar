@@ -30,10 +30,11 @@
         "label": "settings",
         "title": "AgentBar · 偏好设置",
         "url": "index.html#settings",
-        "width": 420,
-        "height": 560,
+        "width": 960,
+        "height": 620,
+        "minWidth": 640,
         "visible": false,
-        "resizable": false,
+        "resizable": true,
         "center": true
       }
     ],

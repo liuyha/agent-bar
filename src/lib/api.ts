@@ -101,7 +101,7 @@ export async function showSettings(): Promise<void> {
     await invoke('open_settings');
     return;
   }
-  const settingsWindow = window.open('#settings', 'agentbar-settings', 'popup,width=456,height=680');
+  const settingsWindow = window.open('#settings', 'agentbar-settings', 'popup,width=960,height=620');
   if (!settingsWindow) throw new Error('偏好设置窗口被浏览器拦截，请允许弹出窗口后重试。');
   settingsWindow.focus();
 }

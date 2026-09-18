@@ -311,7 +311,6 @@ fieldset:disabled label { cursor: default; opacity: .65; }
   .token-statistics { margin-top: 4px; }
 }
 
-.app-desktop.settings-window { padding: 22px; }
 .app-desktop.statistics-window { display: block; padding: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .app-desktop.statistics-window > .window-content > .token-statistics { margin: 0; padding: 14px; border: 0; border-radius: 0; background: var(--app-bg); }
 .app-desktop.statistics-window > .window-content > .statistics-notice { margin: 0; padding: 12px 14px 0; }

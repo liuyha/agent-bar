@@ -1,30 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlertCircle, Check, Clock3, Info, Layers3, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Settings, Sun, X } from 'lucide-react';
+import { AlertCircle, Info, Layers3, LoaderCircle, LogOut, RefreshCw, Settings } from 'lucide-react';
 import { AboutDialog } from './components/AboutDialog';
 import { ProviderCard } from './components/ProviderCard';
 import { ConnectionNotice } from './components/ConnectionNotice';
 import { TokenStatisticsPanel } from './components/TokenStatisticsPanel';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { NativeSelect } from '@/components/ui/native-select';
+import { Preferences } from './components/Preferences';
 import { getDashboard, getSettings, hidePanel, hideSettings, isDesktop, quitApp, refreshDashboard, refreshProviderDashboard, saveSettings, showSettings, subscribeToSettings, subscribeToUsage, subscribeToUsageNavigation } from './lib/api';
 import { mergeDashboardSnapshot } from './lib/snapshot';
-import { codexStatisticsSources } from './lib/settings';
 import { useAccountStatistics } from './lib/useAccountStatistics';
 import { useContentWindowHeight } from './lib/useContentWindowHeight';
 import { dismissPanel, getStatisticsPanelState, hideStatisticsPanel, setPanelInteraction, showStatisticsPanel, updateStatisticsPanelAnchor, subscribeToStatisticsPanel, type StatisticsPanelState } from './lib/panel';
-import type { AppSettings, CodexStatisticsPreference, DashboardSnapshot, ProviderId, Theme } from './types';
-
-const providers: { id: ProviderId; name: string; detail: string }[] = [
-  { id: 'codex', name: 'Codex', detail: 'OpenAI' },
-  { id: 'claude', name: 'Claude', detail: 'Anthropic' },
-];
-
-const themes: { value: Theme; name: string; icon: typeof Monitor }[] = [
-  { value: 'system', name: '跟随系统', icon: Monitor },
-  { value: 'light', name: '浅色', icon: Sun },
-  { value: 'dark', name: '深色', icon: Moon },
-];
+import type { AppSettings, DashboardSnapshot, ProviderId } from './types';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : typeof error === 'string' ? error : '发生未知错误，请稍后重试。';
@@ -82,7 +69,7 @@ export default function App() {
     if (isSettingsWindow) setSettingsError(message);
     else setDashboardError(message);
   }, [isSettingsWindow]);
-  useContentWindowHeight({ shell, content: naturalContent, viewport: mainContent, onError: reportHeightError });
+  useContentWindowHeight({ shell, content: naturalContent, viewport: mainContent, enabled: !isSettingsWindow, onError: reportHeightError });
 
   function cancelStatisticsLeave() {
     if (statisticsLeaveTimer.current !== null) clearTimeout(statisticsLeaveTimer.current);
@@ -377,15 +364,6 @@ export default function App() {
     setSettingsError(null);
   }
 
-  function toggleProvider(provider: ProviderId) {
-    if (!draft) return;
-    updateDraft({
-      enabledProviders: draft.enabledProviders.includes(provider)
-        ? draft.enabledProviders.filter((id) => id !== provider)
-        : providers.filter(({ id }) => id === provider || draft.enabledProviders.includes(id)).map(({ id }) => id),
-    });
-  }
-
   async function handleSave() {
     if (!draft || saveLock.current) return;
     saveLock.current = true;
@@ -440,17 +418,6 @@ export default function App() {
 
   return (
     <div ref={shell} onWheelCapture={() => reportInteraction('pointer', true)} onMouseMove={() => reportInteraction('pointer', true)} onMouseDownCapture={() => reportInteraction('pointer')} onMouseEnter={() => reportInteraction('pointer')} onMouseLeave={() => reportInteraction('leave')} onKeyDown={() => { queueMicrotask(() => reportInteraction('keyboard')); }} onFocus={() => reportInteraction()} onBlur={() => { queueMicrotask(() => reportInteraction()); }} className={`app-shell${isDesktop ? ' app-desktop' : ''}${statisticsExpanded ? ' statistics-expanded' : ''}${isSettingsWindow ? ' settings-window' : ''}`}>
-      {isSettingsWindow && <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
-          <div><span className="brand-name">AgentBar</span><span className="brand-caption">AI 用量，一目了然</span></div>
-        </div>
-        <div className="header-actions">
-          <span className="local-badge"><span />偏好设置</span>
-          {isDesktop && <Button type="button" variant="ghost" size="icon" aria-label="关闭偏好设置" title="关闭偏好设置（Esc）" onClick={() => { void closePanel(); }}><X size={15} /></Button>}
-        </div>
-      </header>}
-
       <main className="main-content" ref={mainContent} onScroll={repositionStatistics}>
         <div className="window-content" ref={naturalContent}>
         {!isSettingsWindow && dashboardError && <ErrorNotice>{dashboardError}</ErrorNotice>}
@@ -471,39 +438,11 @@ export default function App() {
             {!isDesktop && selectedProvider && settings && <div onMouseEnter={cancelStatisticsLeave} onMouseLeave={() => scheduleStatisticsLeave(true)}><TokenStatisticsPanel key={selectedProvider.id} provider={selectedProvider.id} name={selectedProvider.name} account={selectedProvider.account} settings={settings} saving={saving} onPreferencesChange={saveStatisticsPreferences} refreshKey={`${JSON.stringify(selectedProvider)}:${statisticsRefreshes[selectedProvider.id] ?? 0}`} accountStatisticsStore={accountStatisticsStore} /></div>}
           </div>
         ) : draft ? (
-          <div className="settings-page">
-            <div className="section-heading"><div><h1>偏好设置</h1><span>让 AgentBar 按你的习惯工作</span></div></div>
-            <form onSubmit={(event) => { event.preventDefault(); void handleSave(); }}>
-              <fieldset className="settings-group" disabled={saving}>
-                <legend>显示的服务</legend>
-                <div className="grid grid-cols-2 gap-[9px]">
-                  {providers.map((provider) => <label className={`provider-option${draft.enabledProviders.includes(provider.id) ? ' selected' : ''}`} htmlFor={`provider-${provider.id}`} key={provider.id}><Checkbox id={`provider-${provider.id}`} checked={draft.enabledProviders.includes(provider.id)} disabled={saving} onCheckedChange={() => toggleProvider(provider.id)} /><span className="option-name">{provider.name}<small>{provider.detail}</small></span></label>)}
-                </div>
-              </fieldset>
-              <fieldset className="settings-group" disabled={saving}>
-                <legend>自动刷新</legend>
-                <div className="setting-row"><label htmlFor="refresh-interval"><Clock3 size={15} />刷新间隔</label><NativeSelect id="refresh-interval" value={draft.refreshIntervalSeconds} onChange={(event) => updateDraft({ refreshIntervalSeconds: Number(event.target.value) })}><option value={60}>1 分钟</option><option value={300}>5 分钟</option><option value={900}>15 分钟</option></NativeSelect></div>
-              </fieldset>
-              <fieldset className="settings-group" disabled={saving}>
-                <legend>Codex 使用统计</legend>
-                <div className="setting-row"><label htmlFor="codex-statistics-source">统计来源</label><NativeSelect id="codex-statistics-source" value={draft.codexStatisticsSource} onChange={(event) => updateDraft({ codexStatisticsSource: event.target.value as CodexStatisticsPreference })}>{codexStatisticsSources.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</NativeSelect></div>
-                <p className="statistics-footnote">本机记录提供日、周、月、年及全部统计。服务端查询账号汇总和每日 Token，由程序自动选择可用的连接方式。</p>
-              </fieldset>
-              <fieldset className="settings-group" disabled={saving}>
-                <legend>外观</legend>
-                <div className="grid grid-cols-3 gap-2">{themes.map(({ value, name, icon: Icon }) => <label className={`theme-option${draft.theme === value ? ' selected' : ''}`} key={value}><input className="sr-only" type="radio" name="theme" value={value} checked={draft.theme === value} onChange={() => updateDraft({ theme: value })} /><Icon size={17} strokeWidth={1.7} /><span>{name}</span>{draft.theme === value && <span className="theme-selected" aria-hidden="true" />}</label>)}</div>
-              </fieldset>
-              {settingsError && <ErrorNotice>{settingsError}</ErrorNotice>}
-              <div className="save-feedback" aria-live="polite">{saved ? <><Check size={14} />设置已保存并应用</> : isDirty ? <span className="pending-feedback">有未保存的修改</span> : <span className="muted-feedback">设置仅保存在当前设备</span>}</div>
-              <Button className="w-full" type="submit" disabled={saving || !isDirty}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? '正在保存…' : '保存设置'}</Button>
-            </form>
-          </div>
+          <Preferences draft={draft} accounts={snapshot?.providers ?? []} saving={saving} saved={saved} isDirty={isDirty} error={settingsError} desktop={isDesktop} onChange={updateDraft} onSave={() => { void handleSave(); }} onReset={() => { if (settings) { setDraft({ ...settings, enabledProviders: [...settings.enabledProviders] }); setSaved(false); setSettingsError(null); } }} />
         ) : null}
         </div>
       </main>
-      {isSettingsWindow ? (
-        <footer className="app-footer"><Monitor size={12} aria-hidden="true" /><span>{isDesktop ? '自动读取本机已登录账号' : '读取本机账号请使用桌面应用'}</span></footer>
-      ) : (
+      {!isSettingsWindow && (
         <footer className="panel-menu" aria-label="操作菜单">
           <Button type="button" variant="ghost" size="sm" disabled={loading || refreshing || saving || Object.values(refreshingProviders).some(Boolean)} aria-busy={refreshing} onClick={() => { if (bootError) setLoadAttempt((attempt) => attempt + 1); else void refresh(); }}><RefreshCw className={refreshing ? 'spin' : undefined} size={13} aria-hidden="true" /><span>{refreshing ? '刷新中' : '刷新'}</span></Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => { void runMenuAction(showSettings, '打开偏好设置'); }}><Settings size={13} aria-hidden="true" /><span>偏好设置</span></Button>

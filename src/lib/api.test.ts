@@ -27,7 +27,7 @@ describe('browser dashboard', () => {
     window.open = vi.fn().mockReturnValueOnce({ focus }).mockReturnValueOnce(null);
     const { showSettings, quitApp } = await import('./api');
     await showSettings();
-    expect(window.open).toHaveBeenCalledWith('#settings', 'agentbar-settings', 'popup,width=456,height=680');
+    expect(window.open).toHaveBeenCalledWith('#settings', 'agentbar-settings', 'popup,width=960,height=620');
     expect(focus).toHaveBeenCalledOnce();
     await expect(showSettings()).rejects.toThrow('被浏览器拦截');
     await expect(quitApp()).rejects.toThrow('仅在桌面应用中可用');

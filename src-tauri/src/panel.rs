@@ -72,7 +72,6 @@ struct PanelRuntime {
     geometry: Option<PanelGeometry>,
     main_height: Option<f64>,
     statistics_height: Option<f64>,
-    settings_height: Option<f64>,
     statistics: StatisticsPanelState,
     statistics_anchor: Option<AnchorRect>,
     statistics_bounds: Option<Bounds>,
@@ -321,36 +320,6 @@ fn valid_content_height(height: f64) -> bool {
 
 fn fitted_height(content_height: f64, scale: f64, available: f64) -> f64 {
     (content_height.ceil().max(1.0) * scale).min(available)
-}
-
-// Keep the settings window's existing top edge until the new content would
-// leave the work area. Decorations consume space outside the measured webview.
-fn settings_placement(
-    work: Bounds,
-    current: Bounds,
-    scale: f64,
-    content_height: f64,
-    decoration_height: f64,
-) -> Bounds {
-    let margin = (6.0 * scale).min(work.height / 4.0);
-    let height = fitted_height(
-        content_height,
-        scale,
-        (work.height - margin * 2.0 - decoration_height).max(scale),
-    )
-    .floor()
-    .max(1.0);
-    // Native getters report integer physical pixels. Normalize the calculated
-    // bounds too, so fractional display scaling cannot cause repeated updates.
-    let top = (work.y + margin).ceil();
-    let bottom = (work.y + work.height - margin - height - decoration_height)
-        .floor()
-        .max(top);
-    Bounds {
-        y: current.y.clamp(top, bottom),
-        height,
-        ..current
-    }
 }
 
 // Work in physical pixels, including monitors with negative desktop coordinates.
@@ -668,14 +637,6 @@ pub fn resize_content_window(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "窗口内容高度无效").into(),
         );
     }
-    if window.label() == "settings" {
-        app.state::<PanelState>()
-            .runtime
-            .lock()
-            .expect("panel runtime lock")
-            .settings_height = Some(height);
-        return resize_settings(window, height);
-    }
     let state = app.state::<PanelState>();
     let mut runtime = state.runtime.lock().expect("panel runtime lock");
     match window.label() {
@@ -739,69 +700,6 @@ pub fn resize_content_window(
             // Geometry changes preserve the content-render handshake revision.
             emit_statistics_state(app, &runtime.statistics)?;
         }
-    }
-    Ok(())
-}
-
-pub fn settings_monitor_changed(app: &AppHandle) -> tauri::Result<()> {
-    // Initial native move events can precede setup and the first DOM measure.
-    let Some(state) = app.try_state::<PanelState>() else {
-        return Ok(());
-    };
-    let height = state
-        .runtime
-        .lock()
-        .expect("panel runtime lock")
-        .settings_height;
-    // Release the lock before changing the native window, which may emit Moved.
-    if let (Some(height), Some(window)) = (height, app.get_webview_window("settings")) {
-        resize_settings(&window, height)?;
-    }
-    Ok(())
-}
-
-fn resize_settings(window: &WebviewWindow, height: f64) -> tauri::Result<()> {
-    let inner = window.inner_size()?;
-    let outer = window.outer_size()?;
-    let scale = window.scale_factor()?;
-    let Some(monitor) = window.current_monitor()?.or(window.primary_monitor()?) else {
-        if (height.ceil() * scale).round() != inner.height as f64 {
-            window.set_size(tauri::LogicalSize::new(
-                inner.width as f64 / scale,
-                height.ceil(),
-            ))?;
-        }
-        return Ok(());
-    };
-    let area = monitor.work_area();
-    let position = window.outer_position()?;
-    let bounds = settings_placement(
-        Bounds {
-            x: area.position.x as f64,
-            y: area.position.y as f64,
-            width: area.size.width as f64,
-            height: area.size.height as f64,
-        },
-        Bounds {
-            x: position.x as f64,
-            y: position.y as f64,
-            width: inner.width as f64,
-            height: inner.height as f64,
-        },
-        scale,
-        height,
-        outer.height.saturating_sub(inner.height) as f64,
-    );
-    // A native Moved callback also reaches this path. Only change each property
-    // when necessary, so correcting the position cannot create a resize loop.
-    if bounds.height != inner.height as f64 {
-        window.set_size(tauri::LogicalSize::new(
-            bounds.width / scale,
-            bounds.height / scale,
-        ))?;
-    }
-    if bounds.y != position.y as f64 {
-        apply_position(window, bounds, scale)?;
     }
     Ok(())
 }
@@ -1289,74 +1187,6 @@ mod tests {
         assert_eq!((compact.y, compact.height), (25.0, 180.0));
         assert_eq!(side, compact_side);
         assert_eq!(expanded.x, compact.x);
-    }
-
-    #[test]
-    fn settings_height_reserves_titlebar_and_keeps_window_in_work_area() {
-        let current = Bounds {
-            x: 400.0,
-            y: 550.0,
-            width: 420.0,
-            height: 200.0,
-        };
-        let compact = settings_placement(WORK, current, 1.0, 200.0, 28.0);
-        assert_eq!((compact.y, compact.height), (550.0, 200.0));
-        let expanded = settings_placement(WORK, current, 1.0, 1200.0, 28.0);
-        assert_eq!((expanded.y, expanded.height), (30.0, 796.0));
-        assert_eq!(expanded.x, current.x);
-        assert_eq!(expanded.width, current.width);
-        assert_eq!(
-            expanded.y + expanded.height + 28.0,
-            WORK.y + WORK.height - 6.0
-        );
-    }
-
-    #[test]
-    fn settings_restores_desired_height_when_moved_to_a_taller_monitor() {
-        let desired = 900.0;
-        let current = Bounds {
-            x: 100.0,
-            y: 80.0,
-            width: 420.0,
-            height: desired,
-        };
-        let short = settings_placement(WORK, current, 1.0, desired, 28.0);
-        assert_eq!(short.height, 796.0);
-        let tall_work = Bounds {
-            x: 1440.0,
-            height: 1200.0,
-            ..WORK
-        };
-        let moved = Bounds { x: 1500.0, ..short };
-        let restored = settings_placement(tall_work, moved, 1.0, desired, 28.0);
-        assert_eq!(restored.height, desired);
-        assert_eq!(restored.x, moved.x);
-        assert_eq!(
-            settings_placement(tall_work, restored, 1.0, desired, 28.0),
-            restored
-        );
-    }
-
-    #[test]
-    fn settings_fractional_scale_produces_stable_physical_bounds() {
-        let current = Bounds {
-            x: 500.0,
-            y: 750.0,
-            width: 525.0,
-            height: 500.0,
-        };
-        let fitted = settings_placement(WORK, current, 1.25, 1000.0, 35.0);
-        assert_eq!(fitted.height.fract(), 0.0);
-        assert_eq!(fitted.y.fract(), 0.0);
-        assert_eq!(settings_placement(WORK, fitted, 1.25, 1000.0, 35.0), fitted);
-        let taller = Bounds {
-            height: 1400.0,
-            ..WORK
-        };
-        assert_eq!(
-            settings_placement(taller, fitted, 1.25, 1000.0, 35.0).height,
-            1250.0
-        );
     }
 
     #[test]
