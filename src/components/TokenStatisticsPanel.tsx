@@ -8,6 +8,8 @@ import { codexStatisticsSources } from '../lib/settings';
 import type { createAccountStatisticsStore } from '../lib/accountStatistics';
 import { periodLabels } from '../lib/statisticsPeriods';
 import { AccountStatisticsView } from './AccountStatisticsContent';
+import { dateRangeError, dateRangeLabel, emptyDateRange, hasDateRange, localStatisticsRange, type StatisticsDateRange } from '../lib/statisticsDateRange';
+import { StatisticsDateRangeFilter } from './StatisticsDateRangeFilter';
 import { StatisticsPeriodSwitch } from './StatisticsPeriodSwitch';
 import { StatisticsErrorNotice } from './StatisticsErrorNotice';
 import { ActivityStatisticsSummary } from './ActivityStatisticsSummary';
@@ -21,12 +23,16 @@ interface StatisticsContentProps {
   selectedPeriod?: TokenPeriod['period'];
   onPeriodChange: (period: TokenPeriod['period']) => void;
   onRetry: () => void;
+  dateRange?: StatisticsDateRange;
+  onDateRangeChange?: (range: StatisticsDateRange) => void;
 }
 
-export function StatisticsContent({ statistics, loading, error, selectedPeriod = 'day', onPeriodChange, onRetry }: StatisticsContentProps) {
+export function StatisticsContent({ statistics, loading, error, selectedPeriod = 'day', onPeriodChange, onRetry, dateRange = emptyDateRange, onDateRangeChange = () => {} }: StatisticsContentProps) {
   const ready = statistics?.status === 'ready';
   const failure = error || (statistics?.status === 'error' ? statistics.message || '读取本机统计失败，请重试。' : null);
-  const period = ready ? statistics.periods.find((item) => item.period === selectedPeriod) : null;
+  const filtered = selectedPeriod === 'all' && hasDateRange(dateRange);
+  const invalid = filtered && Boolean(dateRangeError(dateRange));
+  const period = ready ? filtered ? localStatisticsRange(statistics, dateRange) : statistics.periods.find((item) => item.period === selectedPeriod) : null;
 
   return <>
     {failure && <StatisticsErrorNotice message={`更新失败：${failure}${ready ? ' 当前显示上次统计结果。' : ''}`} busy={loading} onRetry={onRetry} />}
@@ -34,16 +40,18 @@ export function StatisticsContent({ statistics, loading, error, selectedPeriod =
     {!failure && ready && statistics.message && <p className="statistics-notice" role="status">{statistics.message}</p>}
     <ActivityStatisticsSummary statistics={statistics?.status === 'error' ? null : statistics?.activity} source="local" />
     <StatisticsPeriodSwitch selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
+    {selectedPeriod === 'all' && <StatisticsDateRangeFilter value={dateRange} onChange={onDateRangeChange} />}
+    {filtered && !invalid && ready && !statistics.dailyPeriods && <p className="statistics-footnote" role="status">{loading ? '正在准备每日统计…' : '暂无每日统计，请刷新后按日期筛选。'}</p>}
     <div className="statistics-periods">
       {period ? <section className="statistics-period" key={period.period} aria-label={`${periodLabels[period.period]} Token 统计`}>
-        <div className="statistics-period-heading"><h3>{periodLabels[period.period]}</h3><span>{formatPeriodRange(period.startAt, period.endAt, period.period === 'year' || period.period === 'all')}</span></div>
+        <div className="statistics-period-heading"><h3>{periodLabels[period.period]}</h3><span>{filtered ? dateRangeLabel(dateRange) : formatPeriodRange(period.startAt, period.endAt, period.period === 'year' || period.period === 'all')}</span></div>
         <div className="statistics-totals"><div><span>Token 用量</span><strong title={formatCount(period.totalTokens)}>{formatTokens(period.totalTokens)}</strong></div><div className="statistics-cost"><span>约等金额 · 人民币{period.unpricedTokens > 0 && period.estimatedCostUsd !== null ? '（部分）' : ''}</span><strong className={period.estimatedCostUsd === null ? 'cost-unknown' : undefined}>{formatEstimatedCostCny(period.estimatedCostUsd)}</strong></div></div>
         <dl className="statistics-counts"><div><dt>请求数</dt><dd>{period.requestCount === null ? '—' : formatCount(period.requestCount)}<small>次</small></dd></div><div><dt>会话轮次</dt><dd>{period.conversationTurns === null ? '—' : formatCount(period.conversationTurns)}<small>轮</small></dd></div></dl>
         <details className="statistics-token-details"><summary>Token 明细</summary><dl className="statistics-breakdown"><div><dt>输入（含缓存）</dt><dd title={formatCount(period.inputTokens)}>{formatTokens(period.inputTokens)}</dd></div><div><dt>输出</dt><dd title={formatCount(period.outputTokens)}>{formatTokens(period.outputTokens)}</dd></div><div><dt>缓存读取</dt><dd title={formatCount(period.cachedInputTokens)}>{formatTokens(period.cachedInputTokens)}</dd></div>{period.cacheWriteTokens > 0 && <div><dt>缓存写入</dt><dd title={formatCount(period.cacheWriteTokens)}>{formatTokens(period.cacheWriteTokens)}</dd></div>}</dl></details>
         {period.unpricedTokens > 0 && <p className="unpriced-note"><span title={formatCount(period.unpricedTokens)}>{formatTokens(period.unpricedTokens)}</span> Token 缺少可核实单价。{period.estimatedCostUsd === null ? '暂无法估算金额。' : '金额仅含已计价部分。'}</p>}
         {period.estimatedCostUsd !== null && <p className="statistics-footnote">按固定估算汇率 1 美元 ≈ {USD_TO_CNY_ESTIMATE_RATE} 元人民币换算</p>}
-      </section> : !ready || failure ? <section className="statistics-period" aria-label={`${periodLabels[selectedPeriod]} Token 统计`}>
-        <div className="statistics-period-heading"><h3>{periodLabels[selectedPeriod]}</h3><span>—</span></div>
+      </section> : !ready || failure || filtered ? <section className="statistics-period" aria-label={`${periodLabels[selectedPeriod]} Token 统计`}>
+        <div className="statistics-period-heading"><h3>{periodLabels[selectedPeriod]}</h3><span>{filtered ? dateRangeLabel(dateRange) : '—'}</span></div>
         <div className="statistics-totals"><div><span>Token 用量</span><strong>—</strong></div><div className="statistics-cost"><span>约等金额 · 人民币</span><strong className="cost-unknown">—</strong></div></div>
         <dl className="statistics-counts"><div><dt>请求数</dt><dd>—<small>次</small></dd></div><div><dt>会话轮次</dt><dd>—<small>轮</small></dd></div></dl>
         <details className="statistics-token-details"><summary>Token 明细</summary><dl className="statistics-breakdown">{['输入（含缓存）', '输出', '缓存读取'].map((label) => <div key={label}><dt>{label}</dt><dd>—</dd></div>)}</dl></details>
@@ -63,12 +71,13 @@ function LocalStatisticsView({ provider, refreshKey }: { provider: ProviderId; r
   const { statistics, loading, error } = useLocalStatisticsState(provider);
   const [attempt, setAttempt] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState<TokenPeriod['period']>('day');
+  const [dateRange, setDateRange] = useState<StatisticsDateRange>(emptyDateRange);
 
   useEffect(() => {
     void refreshStatistics(provider);
   }, [provider, refreshKey, attempt]);
 
-  return <StatisticsContent statistics={statistics} loading={loading} error={error} selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} onRetry={() => setAttempt((value) => value + 1)} />;
+  return <StatisticsContent dateRange={dateRange} onDateRangeChange={setDateRange} statistics={statistics} loading={loading} error={error} selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} onRetry={() => setAttempt((value) => value + 1)} />;
 }
 
 type StatisticsPreferences = Pick<AppSettings, 'codexStatisticsSource'>;
@@ -105,6 +114,6 @@ export function TokenStatisticsPanel({ provider, name, refreshKey, accountStatis
       {saving && <p className="statistics-footnote" role="status">正在保存统计设置…</p>}
       {settingsError && <p className="statistics-notice" role="alert">{settingsError}</p>}
     </>}
-    {source === 'local' ? <LocalStatisticsView provider={provider} refreshKey={refreshKey} /> : <AccountStatisticsView key={`${source}:${account ?? ''}`} source={source} store={accountStatisticsStore} />}
+    {source === 'local' ? <LocalStatisticsView key={provider} provider={provider} refreshKey={refreshKey} /> : <AccountStatisticsView key={`${source}:${account ?? ''}`} source={source} store={accountStatisticsStore} />}
   </aside>;
 }

@@ -12,7 +12,7 @@ mod codex_history;
 mod pricing;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     env,
     fs::{self, File},
     io::{BufRead, BufReader, Seek, SeekFrom},
@@ -32,6 +32,9 @@ pub struct TokenStatistics {
     pub status: ProviderStatus,
     pub message: Option<String>,
     pub periods: Vec<TokenPeriod>,
+    /// Sparse local-calendar daily buckets; absent in summaries saved by older versions.
+    #[serde(default)]
+    pub daily_periods: Option<Vec<TokenPeriod>>,
     pub updated_at: String,
     /// All retained local history, independently of the selected token period.
     #[serde(default)]
@@ -532,23 +535,17 @@ fn collect_roots(
         .unwrap_or(end);
     let mut periods: Vec<_> = windows
         .iter()
-        .map(|window| TokenPeriod {
-            period: window.label.into(),
-            start_at: iso(if window.label == "all" {
-                first_record
-            } else {
-                window.start
-            }),
-            end_at: iso(window.end),
-            input_tokens: 0,
-            cached_input_tokens: 0,
-            cache_write_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
-            request_count: (status == ProviderStatus::Ready).then_some(0),
-            conversation_turns: (status == ProviderStatus::Ready).then_some(0),
-            estimated_cost_usd: (status == ProviderStatus::Ready).then_some(0.0),
-            unpriced_tokens: 0,
+        .map(|window| {
+            empty_period(
+                window.label,
+                if window.label == "all" {
+                    first_record
+                } else {
+                    window.start
+                },
+                window.end,
+                status,
+            )
         })
         .collect();
     for event in unique.values() {
@@ -556,23 +553,7 @@ fn collect_roots(
             if event.timestamp < window.start || event.timestamp > window.end {
                 continue;
             }
-            let usage = event.usage;
-            period.input_tokens = period.input_tokens.saturating_add(usage.input);
-            period.cached_input_tokens = period.cached_input_tokens.saturating_add(usage.cached);
-            period.cache_write_tokens = period.cache_write_tokens.saturating_add(usage.cache_write);
-            period.output_tokens = period.output_tokens.saturating_add(usage.output);
-            period.total_tokens = period.input_tokens.saturating_add(period.output_tokens);
-            period.request_count = period
-                .request_count
-                .zip(event.request_count)
-                .map(|(count, more)| count.saturating_add(more));
-            if let Some(cost) = pricing::estimate(provider, event.model.as_deref(), usage) {
-                if let Some(total_cost) = period.estimated_cost_usd.as_mut() {
-                    *total_cost += cost;
-                }
-            } else if usage.total() > 0 {
-                period.unpriced_tokens = period.unpriced_tokens.saturating_add(usage.total());
-            }
+            add_event(period, provider, event);
         }
     }
     for (window, period) in windows.iter().zip(periods.iter_mut()) {
@@ -616,6 +597,25 @@ fn collect_roots(
     } else {
         message
     };
+    let daily_periods = summarize_days(
+        provider,
+        status,
+        &Local,
+        end,
+        unique.values(),
+        turns.values().copied(),
+        cache
+            .files
+            .values()
+            .flat_map(|file| file.parsed.unknown_turns.iter().copied()),
+    );
+    let message = match &daily_periods {
+        Ok(_) => message,
+        Err(error) => Some(match message {
+            Some(message) => format!("{message}；{error}"),
+            None => error.clone(),
+        }),
+    };
     let activity = activity::summarize(
         end.with_timezone(&Local),
         unique
@@ -637,9 +637,102 @@ fn collect_roots(
         status,
         message,
         periods,
+        daily_periods: daily_periods.ok(),
         updated_at: iso(windows[0].end),
         activity,
     }
+}
+
+fn empty_period(
+    label: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    status: ProviderStatus,
+) -> TokenPeriod {
+    TokenPeriod {
+        period: label.into(),
+        start_at: iso(start),
+        end_at: iso(end),
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        request_count: (status == ProviderStatus::Ready).then_some(0),
+        conversation_turns: (status == ProviderStatus::Ready).then_some(0),
+        estimated_cost_usd: (status == ProviderStatus::Ready).then_some(0.0),
+        unpriced_tokens: 0,
+    }
+}
+
+fn add_event(period: &mut TokenPeriod, provider: ProviderId, event: &Event) {
+    let usage = event.usage;
+    period.input_tokens = period.input_tokens.saturating_add(usage.input);
+    period.cached_input_tokens = period.cached_input_tokens.saturating_add(usage.cached);
+    period.cache_write_tokens = period.cache_write_tokens.saturating_add(usage.cache_write);
+    period.output_tokens = period.output_tokens.saturating_add(usage.output);
+    period.total_tokens = period.input_tokens.saturating_add(period.output_tokens);
+    period.request_count = period
+        .request_count
+        .zip(event.request_count)
+        .map(|(count, more)| count.saturating_add(more));
+    if let Some(cost) = pricing::estimate(provider, event.model.as_deref(), usage) {
+        if let Some(total_cost) = period.estimated_cost_usd.as_mut() {
+            *total_cost += cost;
+        }
+    } else if usage.total() > 0 {
+        period.unpriced_tokens = period.unpriced_tokens.saturating_add(usage.total());
+    }
+}
+
+/// Group already-normalized requests and deduplicated turns once, rather than scanning
+/// all retained records for every historical date. Empty dates are implicit zero buckets.
+fn summarize_days<'a, Tz: TimeZone>(
+    provider: ProviderId,
+    status: ProviderStatus,
+    zone: &Tz,
+    end: DateTime<Utc>,
+    events: impl IntoIterator<Item = &'a Event>,
+    turns: impl IntoIterator<Item = DateTime<Utc>>,
+    unknown_turns: impl IntoIterator<Item = DateTime<Utc>>,
+) -> Result<Vec<TokenPeriod>, String> {
+    let mut buckets = BTreeMap::<NaiveDate, TokenPeriod>::new();
+    for event in events.into_iter().filter(|event| event.timestamp <= end) {
+        let period = buckets
+            .entry(event.timestamp.with_timezone(zone).date_naive())
+            .or_insert_with(|| empty_period("all", end, end, status));
+        add_event(period, provider, event);
+    }
+    for timestamp in turns.into_iter().filter(|timestamp| *timestamp <= end) {
+        let period = buckets
+            .entry(timestamp.with_timezone(zone).date_naive())
+            .or_insert_with(|| empty_period("all", end, end, status));
+        period.conversation_turns = period
+            .conversation_turns
+            .map(|count| count.saturating_add(1));
+    }
+    for timestamp in unknown_turns
+        .into_iter()
+        .filter(|timestamp| *timestamp <= end)
+    {
+        buckets
+            .entry(timestamp.with_timezone(zone).date_naive())
+            .or_insert_with(|| empty_period("all", end, end, status))
+            .conversation_turns = None;
+    }
+    buckets
+        .into_iter()
+        .map(|(date, mut period)| {
+            period.start_at = iso(day_start(zone, date)?);
+            let next_date = date.succ_opt().ok_or("无法计算本地日期边界")?;
+            period.end_at =
+                iso((day_start(zone, next_date)? - chrono::Duration::milliseconds(1)).min(end));
+            if period.total_tokens > 0 && period.unpriced_tokens == period.total_tokens {
+                period.estimated_cost_usd = None;
+            }
+            Ok(period)
+        })
+        .collect()
 }
 
 fn parse_incremental_codex(path: &Path, prior: Option<CachedFile>) -> std::io::Result<CachedFile> {
@@ -1113,6 +1206,70 @@ mod tests {
     }
 
     #[test]
+    fn daily_buckets_use_calendar_midnight_and_keep_turn_only_dates() {
+        let zone = FixedOffset::east_opt(8 * 3600).unwrap();
+        let end = time("2026-01-02T04:00:00Z");
+        let event = |timestamp: &str| Event {
+            key: timestamp.into(),
+            timestamp: time(timestamp),
+            model: Some("gpt-6-astra".into()),
+            usage: Usage {
+                input: 100,
+                output: 10,
+                ..Usage::default()
+            },
+            request_count: Some(1),
+            legacy_turn: None,
+            fork_baseline: None,
+            codex_snapshot: None,
+        };
+        let events = [
+            event("2025-12-31T15:59:59.999Z"),
+            event("2025-12-31T16:00:00Z"),
+            event("2026-01-02T04:00:00.001Z"),
+        ];
+        let daily = summarize_days(
+            ProviderId::Codex,
+            ProviderStatus::Ready,
+            &zone,
+            end,
+            &events,
+            [time("2026-01-02T04:00:00Z")],
+            [time("2026-01-02T04:00:00.001Z")],
+        )
+        .unwrap();
+        assert_eq!(daily.len(), 3);
+        assert_eq!(daily[0].start_at, "2025-12-30T16:00:00.000Z");
+        assert_eq!(daily[0].end_at, "2025-12-31T15:59:59.999Z");
+        assert_eq!(daily[1].start_at, "2025-12-31T16:00:00.000Z");
+        assert_eq!(daily[1].end_at, "2026-01-01T15:59:59.999Z");
+        assert_eq!(daily[2].start_at, "2026-01-01T16:00:00.000Z");
+        assert_eq!(daily[2].end_at, "2026-01-02T04:00:00.000Z");
+        assert!(daily.iter().all(|day| day.period == "all"));
+        assert_eq!(
+            daily.iter().map(|day| day.total_tokens).collect::<Vec<_>>(),
+            [110, 110, 0]
+        );
+        assert_eq!(daily[2].request_count, Some(0));
+        assert_eq!(daily[2].conversation_turns, Some(1));
+        assert_eq!(daily[2].estimated_cost_usd, Some(0.0));
+    }
+
+    #[test]
+    fn older_summary_missing_daily_buckets_requires_refresh() {
+        let old = json!({
+            "status": "ready", "message": null, "periods": [],
+            "updatedAt": "2026-09-16T12:00:00.000Z"
+        });
+        let summary: TokenStatistics = serde_json::from_value(old.clone()).unwrap();
+        assert!(summary.daily_periods.is_none());
+        let mut current = old;
+        current["dailyPeriods"] = json!([]);
+        let summary: TokenStatistics = serde_json::from_value(current).unwrap();
+        assert!(summary.daily_periods.unwrap().is_empty());
+    }
+
+    #[test]
     fn year_and_all_include_old_archived_logs_deduplicate_and_exclude_future_metrics() {
         for provider in [ProviderId::Codex, ProviderId::Claude] {
             let directory = tempdir().unwrap();
@@ -1157,6 +1314,51 @@ mod tests {
             }
             assert_eq!(result.periods[3].start_at, "2025-12-31T16:00:00.000Z");
             assert_eq!(result.periods[4].start_at, timestamps[0].0);
+            let daily = result.daily_periods.as_ref().unwrap();
+            let all = &result.periods[4];
+            assert_eq!(
+                daily.iter().map(|day| day.input_tokens).sum::<u64>(),
+                all.input_tokens
+            );
+            assert_eq!(
+                daily.iter().map(|day| day.cached_input_tokens).sum::<u64>(),
+                all.cached_input_tokens
+            );
+            assert_eq!(
+                daily.iter().map(|day| day.cache_write_tokens).sum::<u64>(),
+                all.cache_write_tokens
+            );
+            assert_eq!(
+                daily.iter().map(|day| day.output_tokens).sum::<u64>(),
+                all.output_tokens
+            );
+            assert_eq!(
+                daily.iter().map(|day| day.total_tokens).sum::<u64>(),
+                all.total_tokens
+            );
+            assert_eq!(
+                daily
+                    .iter()
+                    .map(|day| day.request_count.unwrap())
+                    .sum::<u64>(),
+                4
+            );
+            assert_eq!(
+                daily
+                    .iter()
+                    .map(|day| day.conversation_turns.unwrap())
+                    .sum::<u64>(),
+                4
+            );
+            assert!(
+                (daily
+                    .iter()
+                    .map(|day| day.estimated_cost_usd.unwrap())
+                    .sum::<f64>()
+                    - all.estimated_cost_usd.unwrap())
+                .abs()
+                    < 1e-9
+            );
         }
     }
 
@@ -1197,6 +1399,18 @@ mod tests {
                 &unknown("2026-08-01T00:00:00Z"),
             );
             let result = collect(&mut cache);
+            let daily = result.daily_periods.as_ref().unwrap();
+            assert_eq!(daily.len(), 3);
+            for old in &daily[..2] {
+                assert_eq!(old.request_count, None);
+                assert_eq!(old.conversation_turns, None);
+                assert_eq!(old.estimated_cost_usd, None);
+                assert_eq!(old.unpriced_tokens, 330);
+            }
+            assert_eq!(daily[2].request_count, Some(1));
+            assert_eq!(daily[2].conversation_turns, Some(1));
+            assert_eq!(daily[2].unpriced_tokens, 0);
+            assert!(daily[2].estimated_cost_usd.unwrap() > 0.0);
             let day = &result.periods[0];
             assert_eq!(day.request_count, Some(1));
             assert_eq!(day.conversation_turns, Some(1));

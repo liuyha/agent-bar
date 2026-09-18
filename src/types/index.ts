@@ -74,6 +74,8 @@ export interface TokenStatistics {
   status: 'ready' | 'unavailable' | 'error';
   message: string | null;
   periods: TokenPeriod[];
+  /** Missing in older caches; rebuilt from local history on refresh. */
+  dailyPeriods?: TokenPeriod[] | null;
   /** Optional while reading a summary saved before activity statistics were introduced. */
   activity?: ActivityStatistics | null;
   updatedAt: string;

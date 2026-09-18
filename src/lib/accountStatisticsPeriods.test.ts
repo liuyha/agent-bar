@@ -130,3 +130,94 @@ describe('server statistics calendar periods', () => {
     expect(now.getTime()).toBe(timestamp);
   });
 });
+
+describe('server statistics custom date ranges', () => {
+  const now = new Date(2026, 8, 18, 14);
+  const records = [
+    { date: '2026-09-19', tokens: 160 },
+    { date: '2026-09-18', tokens: 80 },
+    { date: '2026-09-17', tokens: 40 },
+    { date: '2026-01-01', tokens: 20 },
+    { date: '2025-12-31', tokens: 10 },
+    { date: '2025-12-30', tokens: 5 },
+  ];
+  const summary = { lifetimeTokens: 9999, peakDailyTokens: 8888 };
+
+  it('includes both dates across a year boundary and derives metrics from matching records', () => {
+    const result = accountStatisticsPeriod(snapshot(records, summary), 'all', now, { startDate: '2025-12-31', endDate: '2026-01-01' });
+    expect(result).toEqual({
+      startDate: '2025-12-31', endDate: '2026-01-01',
+      dailyUsage: [{ date: '2025-12-31', tokens: 10 }, { date: '2026-01-01', tokens: 20 }],
+      totalTokens: 30, totalSource: 'daily', peakDailyTokens: 20, peakSource: 'daily',
+    });
+  });
+
+  it.each([
+    [{ startDate: '2026-09-17', endDate: '' }, 120, 80, 2],
+    [{ startDate: '', endDate: '2026-01-01' }, 35, 20, 3],
+    [{ startDate: '2026-09-18', endDate: '2026-09-18' }, 80, 80, 1],
+  ])('supports open and single-day ranges (%j)', (range, totalTokens, peakDailyTokens, count) => {
+    const result = accountStatisticsPeriod(snapshot(records, summary), 'all', now, range);
+    expect(result).toMatchObject({ totalTokens, peakDailyTokens, totalSource: 'daily', peakSource: 'daily' });
+    expect(result.dailyUsage).toHaveLength(count);
+    expect(result.endDate).toBe(range.endDate || '2026-09-18');
+  });
+
+  it.each([null, [], [{ date: '2026-09-17', tokens: 10 }]])('keeps missing range coverage unknown even with lifetime summaries (%j)', (dailyUsage) => {
+    const result = accountStatisticsPeriod(snapshot(dailyUsage, summary), 'all', now, { startDate: '2026-09-18', endDate: '' });
+    expect(result).toMatchObject({ totalTokens: null, totalSource: null, peakDailyTokens: null, peakSource: null });
+    expect(result.dailyUsage).toEqual(dailyUsage === null ? null : []);
+  });
+
+  it('retains an explicitly measured zero in the requested range', () => {
+    const result = accountStatisticsPeriod(snapshot([{ date: '2026-09-18', tokens: 0 }], summary), 'all', now, { startDate: '2026-09-18', endDate: '' });
+    expect(result).toMatchObject({ totalTokens: 0, totalSource: 'daily', peakDailyTokens: 0, peakSource: 'daily' });
+  });
+
+  it.each([
+    { startDate: '2026-09-18', endDate: '2026-09-17' },
+    { startDate: '2026-09-19', endDate: '' },
+    { startDate: '', endDate: '2026-09-19' },
+    { startDate: '2026-02-29', endDate: '' },
+  ])('rejects invalid ranges without falling back to lifetime metrics (%j)', (range) => {
+    expect(accountStatisticsPeriod(snapshot(records, summary), 'all', now, range)).toMatchObject({
+      dailyUsage: null, totalTokens: null, totalSource: null, peakDailyTokens: null, peakSource: null,
+    });
+  });
+
+  it.each(periods.filter((period) => period !== 'all'))('ignores even an invalid saved custom range for %s', (period) => {
+    const source = snapshot(records, summary);
+    expect(accountStatisticsPeriod(source, period, now, { startDate: '2026-09-19', endDate: '2020-01-01' }))
+      .toEqual(accountStatisticsPeriod(source, period, now));
+  });
+
+  it('restores authoritative lifetime summaries when both range inputs are cleared', () => {
+    expect(accountStatisticsPeriod(snapshot(records, summary), 'all', now, { startDate: '', endDate: '' })).toMatchObject({
+      startDate: null, endDate: '2026-09-18', totalTokens: 9999, totalSource: 'summary', peakDailyTokens: 8888, peakSource: 'summary',
+    });
+  });
+
+  it.each(['Asia/Shanghai', 'America/Los_Angeles'])('preserves service calendar dates in %s', (timezone) => {
+    vi.stubEnv('TZ', timezone);
+    try {
+      const result = accountStatisticsPeriod(snapshot(records, summary), 'all', new Date('2026-09-18T16:00:00Z'), { startDate: '2025-12-31', endDate: '2026-01-01' });
+      expect(result.dailyUsage).toEqual([{ date: '2025-12-31', tokens: 10 }, { date: '2026-01-01', tokens: 20 }]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('filters and sorts without mutating source data or the selected range', () => {
+    const source = snapshot(records.map((record) => Object.freeze({ ...record })), summary);
+    const before = structuredClone(source);
+    Object.freeze(source.dailyUsage);
+    Object.freeze(source.summary);
+    Object.freeze(source);
+    const range = Object.freeze({ startDate: '2025-12-31', endDate: '2026-01-01' });
+    const timestamp = now.getTime();
+    const result = accountStatisticsPeriod(source, 'all', now, range);
+    expect(result.dailyUsage?.map(({ date }) => date)).toEqual(['2025-12-31', '2026-01-01']);
+    expect(source).toEqual(before);
+    expect(now.getTime()).toBe(timestamp);
+  });
+});

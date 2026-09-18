@@ -21,6 +21,32 @@ function render(data: TokenStatistics | null = statistics, loading = false, erro
 }
 
 describe('token statistics', () => {
+  it('shows date controls only for all and updates local metrics for the inclusive range', () => {
+    expect(render()).not.toContain('type="date"');
+    const html = renderToStaticMarkup(createElement(StatisticsContent, {
+      statistics: { ...statistics, dailyPeriods: [
+        { ...statistics.periods[0], startAt: new Date(2025, 8, 14).toISOString() },
+        { ...statistics.periods[1], startAt: new Date(2025, 8, 15).toISOString() },
+      ] }, loading: false, error: null, selectedPeriod: 'all',
+      dateRange: { startDate: '2025-09-15', endDate: '2025-09-15' },
+      onPeriodChange: () => {}, onDateRangeChange: () => {}, onRetry: () => {},
+    }));
+    expect(html.match(/type="date"/g)).toHaveLength(2);
+    expect(html).toContain('<strong title="3,000">3K</strong>');
+    expect(html).toContain('¥0.70');
+    expect(html).toContain('<dt>请求数</dt><dd>24<small>次</small>');
+    expect(html).toContain('<dt>会话轮次</dt><dd>6<small>轮</small>');
+  });
+
+  it('does not substitute all-time totals when older cached data cannot be filtered', () => {
+    const html = renderToStaticMarkup(createElement(StatisticsContent, {
+      statistics, loading: false, error: null, selectedPeriod: 'all',
+      dateRange: { startDate: '2025-09-15', endDate: '' }, onPeriodChange: () => {}, onRetry: () => {},
+    }));
+    expect(html).toContain('暂无每日统计，请刷新后按日期筛选');
+    expect(html).toContain('<span>Token 用量</span><strong>—</strong>');
+    expect(html).not.toContain('7.5K');
+  });
   it.each(['background', 'manual'] as const)('preserves the server refresh button state in the header during %s refresh', async (mode) => {
     const store = createAccountStatisticsStore();
     const pending = store.refresh('auto', mode);

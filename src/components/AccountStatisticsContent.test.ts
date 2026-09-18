@@ -19,6 +19,32 @@ describe('account statistics content', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 8, 17, 12)); });
   afterEach(() => { vi.useRealTimers(); });
 
+  it('shows date controls only for all and filters totals and daily rows together', () => {
+    expect(render(statistics, null, 'day')).not.toContain('type="date"');
+    const html = renderToStaticMarkup(createElement(AccountStatisticsContent, {
+      statistics, loading: false, refreshing: false, error: null, selectedPeriod: 'all',
+      dateRange: { startDate: '2026-09-14', endDate: '2026-09-14' },
+      onPeriodChange: () => {}, onDateRangeChange: () => {}, onRetry: () => {},
+    }));
+    expect(html.match(/type="date"/g)).toHaveLength(2);
+    expect(html).toContain('重置');
+    expect(html).toContain('<dt>Token 合计</dt><dd title="0">0</dd>');
+    expect(html).not.toContain('<time>2026-09-12</time>');
+    expect(html).toContain('<time>2026-09-14</time>');
+    expect(html).toContain('仅汇总所选日期内服务端已返回的记录');
+  });
+
+  it('rejects a reversed range without falling back to lifetime totals', () => {
+    const html = renderToStaticMarkup(createElement(AccountStatisticsContent, {
+      statistics, loading: false, refreshing: false, error: null, selectedPeriod: 'all',
+      dateRange: { startDate: '2026-09-14', endDate: '2026-09-12' },
+      onPeriodChange: () => {}, onRetry: () => {},
+    }));
+    expect(html).toContain('开始日期不能晚于结束日期');
+    expect(html).toContain('<dt>Token 合计</dt><dd>—</dd>');
+    expect(html).not.toContain('<time>');
+  });
+
   it('defaults to today and shares the five-option selector with local statistics', () => {
     const html = renderToStaticMarkup(createElement(AccountStatisticsContent, { statistics, loading: false, refreshing: false, error: null, onPeriodChange: () => {}, onRetry: () => {} }));
     expect(html).toContain('role="radiogroup" aria-label="统计时段"');

@@ -1,4 +1,13 @@
 .statistics-title { min-width: 0; }
+.statistics-date-filter { margin: 0 0 12px; }
+.statistics-date-fields { display: flex; align-items: flex-end; gap: 6px; }
+.statistics-date-fields label { display: grid; flex: 1; min-width: 0; gap: 5px; color: var(--secondary); font-size: 9px; }
+.statistics-date-fields input { box-sizing: border-box; width: 100%; min-width: 0; height: 30px; padding: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--card-bg); color: var(--text); font: inherit; font-size: 10px; font-variant-numeric: tabular-nums; }
+.statistics-date-fields input:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.statistics-date-fields input[aria-invalid="true"] { border-color: var(--warning); }
+.statistics-date-fields > button { height: 30px; padding: 4px 5px; font-size: 10px; flex-shrink: 0; }
+.statistics-date-separator { align-self: flex-end; line-height: 30px; color: var(--secondary); font-size: 10px; }
+.statistics-date-error { margin: 6px 0 0; color: var(--warning); font-size: 10px; }
 .statistics-title > svg { flex-shrink: 0; }
 .statistics-title > h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .statistics-source-control { display: flex; flex-shrink: 0; align-items: center; gap: 6px; min-width: 0; margin-left: auto; color: var(--secondary); font-size: 10px; }
