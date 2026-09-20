@@ -45,42 +45,49 @@ describe('account statistics content', () => {
     expect(html).not.toContain('<time>');
   });
 
-  it('defaults to today and shares the five-option selector with local statistics', () => {
+  it('defaults to yesterday with the same five period values as local statistics', () => {
     const html = renderToStaticMarkup(createElement(AccountStatisticsContent, { statistics, loading: false, refreshing: false, error: null, onPeriodChange: () => {}, onRetry: () => {} }));
     expect(html).toContain('role="radiogroup" aria-label="统计时段"');
     expect([...html.matchAll(/<input[^>]*value="([^"]+)"/g)].map((match) => match[1])).toEqual(['day', 'week', 'month', 'year', 'all']);
     expect(html.match(/<input[^>]*checked=""[^>]*>/g)).toHaveLength(1);
     expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain('value="day"');
-    for (const label of ['今日', '本周', '本月', '本年', '全部']) expect(html).toContain(label);
-    expect(html).toContain('今日服务端 Token 统计');
+    for (const label of ['昨日', '本周', '本月', '本年', '全部']) expect(html).toContain(label);
+    expect(html).toContain('昨日服务端 Token 统计');
+    expect(html).not.toContain('今日');
   });
 
   it.each([
-    ['day', '今日', 64, ['2026-09-17']],
-    ['week', '本周', 96, ['2026-09-14', '2026-09-17']],
-    ['month', '本月', 120, ['2026-09-01', '2026-09-13', '2026-09-14', '2026-09-17']],
-    ['year', '本年', 126, ['2026-01-01', '2026-08-31', '2026-09-01', '2026-09-13', '2026-09-14', '2026-09-17']],
-    ['all', '全部', 999, ['2025-12-31', '2026-01-01', '2026-08-31', '2026-09-01', '2026-09-13', '2026-09-14', '2026-09-17']],
+    ['day', '昨日', 7, ['2026-09-16']],
+    ['week', '本周', 103, ['2026-09-14', '2026-09-16', '2026-09-17']],
+    ['month', '本月', 127, ['2026-09-01', '2026-09-13', '2026-09-14', '2026-09-16', '2026-09-17']],
+    ['year', '本年', 133, ['2026-01-01', '2026-08-31', '2026-09-01', '2026-09-13', '2026-09-14', '2026-09-16', '2026-09-17']],
+    ['all', '全部', 999, ['2025-12-31', '2026-01-01', '2026-08-31', '2026-09-01', '2026-09-13', '2026-09-14', '2026-09-16', '2026-09-17']],
   ] as const)('changes totals, peaks and daily rows together for %s', (period, label, total, dates) => {
     const dailyUsage = ['2025-12-31', '2026-01-01', '2026-08-31', '2026-09-01', '2026-09-13', '2026-09-14', '2026-09-17', '2026-09-18'].map((date, index) => ({ date, tokens: 2 ** index }));
+    dailyUsage.push({ date: '2026-09-16', tokens: 7 });
     const html = render({ ...statistics, summary: { ...statistics.summary, lifetimeTokens: 999, peakDailyTokens: 500 }, dailyUsage }, null, period);
     expect(html).toContain(`aria-label="${label}服务端 Token 统计"`);
     expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain(`value="${period}"`);
     expect(html).toContain(`<dd title="${total}">${total}</dd>`);
-    expect(html).toContain(`<dd title="${period === 'all' ? 500 : 64}">${period === 'all' ? 500 : 64}</dd>`);
+    const peak = period === 'all' ? 500 : period === 'day' ? 7 : 64;
+    expect(html).toContain(`<dd title="${peak}">${peak}</dd>`);
     expect([...html.matchAll(/<time>([^<]+)<\/time>/g)].map((match) => match[1])).toEqual(dates);
     expect(html).toContain('aria-label="账号活动概览"');
     expect(html).toContain('2 分 5 秒');
     expect(html).not.toContain(period === 'all' ? '每日记录可能仅覆盖部分历史' : '可能不完整');
   });
 
-  it('distinguishes no returned dates from a genuine zero and keeps today independent of stale service updates', () => {
+  it('distinguishes missing yesterday records from zero and ignores stale service update dates', () => {
     const missing = render({ ...statistics, serviceUpdatedAt: '2026-09-14' }, null, 'day');
-    expect(missing).toContain('服务端尚未返回今日日期范围内的每日记录');
+    expect(missing).toContain('服务端尚未返回昨日日期范围内的每日记录');
     expect(missing).toContain('<dt>Token 合计</dt><dd>—</dd>');
     expect(missing).not.toContain('<time>2026-09-14</time>');
-    const zero = render({ ...statistics, dailyUsage: [{ date: '2026-09-17', tokens: 0 }] }, null, 'day');
+    const zero = render({ ...statistics, dailyUsage: [{ date: '2026-09-16', tokens: 0 }] }, null, 'day');
     expect(zero).toContain('<dt>Token 合计</dt><dd title="0">0</dd>');
+    const todayOnly = render({ ...statistics, dailyUsage: [{ date: '2026-09-17', tokens: 64 }] }, null, 'day');
+    expect(todayOnly).toContain('服务端尚未返回昨日日期范围内的每日记录');
+    expect(todayOnly).toContain('<dt>Token 合计</dt><dd>—</dd>');
+    expect(todayOnly).not.toContain('<time>2026-09-17</time>');
   });
 
   it('keeps unavailable lifetime totals unknown even when returned daily records have values', () => {

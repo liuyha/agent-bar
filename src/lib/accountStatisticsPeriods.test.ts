@@ -26,14 +26,14 @@ describe('server statistics calendar periods', () => {
   ];
 
   it.each([
-    ['day', '2026-09-17', 128, 1],
-    ['week', '2026-09-14', 224, 3],
-    ['month', '2026-09-01', 248, 5],
-    ['year', '2026-01-01', 254, 7],
-    ['all', null, null, 8],
-  ] as const)('filters %s through today and excludes future records', (period, startDate, totalTokens, count) => {
+    ['day', '2026-09-16', '2026-09-16', 64, 64, 1],
+    ['week', '2026-09-14', '2026-09-17', 224, 128, 3],
+    ['month', '2026-09-01', '2026-09-17', 248, 128, 5],
+    ['year', '2026-01-01', '2026-09-17', 254, 128, 7],
+    ['all', null, '2026-09-17', null, null, 8],
+  ] as const)('filters %s to its calendar range and excludes later records', (period, startDate, endDate, totalTokens, peakDailyTokens, count) => {
     const result = accountStatisticsPeriod(snapshot(records), period, new Date(2026, 8, 17, 15));
-    expect(result).toMatchObject({ startDate, endDate: '2026-09-17', totalTokens, totalSource: period === 'all' ? null : 'daily', peakDailyTokens: period === 'all' ? null : 128, peakSource: period === 'all' ? null : 'daily' });
+    expect(result).toMatchObject({ startDate, endDate, totalTokens, totalSource: period === 'all' ? null : 'daily', peakDailyTokens, peakSource: period === 'all' ? null : 'daily' });
     expect(result.dailyUsage).toHaveLength(count);
   });
 
@@ -61,7 +61,7 @@ describe('server statistics calendar periods', () => {
     const now = new Date(2026, 8, 17);
     expect(accountStatisticsPeriod(snapshot(null), period, now)).toMatchObject({ dailyUsage: null, totalTokens: null, totalSource: null, peakDailyTokens: null, peakSource: null });
     expect(accountStatisticsPeriod(snapshot([]), period, now)).toMatchObject({ dailyUsage: [], totalTokens: null, totalSource: null, peakDailyTokens: null, peakSource: null });
-    const zero = snapshot([{ date: '2026-09-17', tokens: 0 }], { lifetimeTokens: 0, peakDailyTokens: 0 });
+    const zero = snapshot([{ date: '2026-09-16', tokens: 0 }], { lifetimeTokens: 0, peakDailyTokens: 0 });
     expect(accountStatisticsPeriod(zero, period, now)).toMatchObject({ totalTokens: 0, totalSource: period === 'all' ? 'summary' : 'daily', peakDailyTokens: 0, peakSource: period === 'all' ? 'summary' : 'daily' });
   });
 
@@ -70,7 +70,7 @@ describe('server statistics calendar periods', () => {
     const now = new Date(2026, 8, 17);
     expect(accountStatisticsPeriod(snapshot(null, summary), period, now)).toMatchObject({ dailyUsage: null, totalTokens: null, totalSource: null, peakDailyTokens: null, peakSource: null });
     expect(accountStatisticsPeriod(snapshot([{ date: '2025-12-31', tokens: 1 }], summary), period, now)).toMatchObject({ dailyUsage: [], totalTokens: null, totalSource: null, peakDailyTokens: null, peakSource: null });
-    expect(accountStatisticsPeriod(snapshot([{ date: '2026-09-17', tokens: 12 }], summary), period, now)).toMatchObject({ totalTokens: 12, totalSource: 'daily', peakDailyTokens: 12, peakSource: 'daily' });
+    expect(accountStatisticsPeriod(snapshot([{ date: '2026-09-16', tokens: 12 }], summary), period, now)).toMatchObject({ totalTokens: 12, totalSource: 'daily', peakDailyTokens: 12, peakSource: 'daily' });
   });
 
   it.each([
@@ -95,19 +95,40 @@ describe('server statistics calendar periods', () => {
   });
 
   it.each([
-    ['Asia/Shanghai', '2026-09-16T16:01:00Z', '2026-09-17'],
-    ['America/Los_Angeles', '2026-09-17T06:59:00Z', '2026-09-16'],
-  ])('uses the local calendar in %s around UTC midnight', (timezone, instant, expectedDate) => {
+    ['Asia/Shanghai', '2026-09-16T16:01:00Z', '2026-09-16'],
+    ['America/Los_Angeles', '2026-09-17T06:59:00Z', '2026-09-15'],
+  ])('uses the previous local calendar day in %s around UTC midnight', (timezone, instant, expectedDate) => {
     vi.stubEnv('TZ', timezone);
     try {
       const now = new Date(instant);
       expect(now.getTimezoneOffset()).not.toBe(0);
       const result = accountStatisticsPeriod(snapshot([
-        { date: '2026-09-16', tokens: 10 },
-        { date: '2026-09-17', tokens: 20 },
+        { date: '2026-09-15', tokens: 10 },
+        { date: '2026-09-16', tokens: 20 },
+        { date: '2026-09-17', tokens: 40 },
       ]), 'day', now);
       expect(result).toMatchObject({ startDate: expectedDate, endDate: expectedDate });
-      expect(result.dailyUsage).toEqual([{ date: expectedDate, tokens: expectedDate.endsWith('17') ? 20 : 10 }]);
+      expect(result.dailyUsage).toEqual([{ date: expectedDate, tokens: expectedDate.endsWith('16') ? 20 : 10 }]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ['Asia/Shanghai', '2026-10-01T00:01:00', '2026-09-30'],
+    ['Asia/Shanghai', '2026-01-01T00:01:00', '2025-12-31'],
+    ['Asia/Shanghai', '2024-03-01T00:01:00', '2024-02-29'],
+    ['America/Los_Angeles', '2026-03-09T00:30:00', '2026-03-08'],
+    ['America/Los_Angeles', '2026-11-01T23:30:00', '2026-10-31'],
+  ])('selects yesterday across calendar and DST boundaries in %s at %s', (timezone, instant, expectedDate) => {
+    vi.stubEnv('TZ', timezone);
+    try {
+      const now = new Date(instant);
+      const timestamp = now.getTime();
+      const result = accountStatisticsPeriod(snapshot([{ date: expectedDate, tokens: 42 }]), 'day', now);
+      expect(result).toMatchObject({ startDate: expectedDate, endDate: expectedDate, totalTokens: 42 });
+      expect(result.dailyUsage).toEqual([{ date: expectedDate, tokens: 42 }]);
+      expect(now.getTime()).toBe(timestamp);
     } finally {
       vi.unstubAllEnvs();
     }

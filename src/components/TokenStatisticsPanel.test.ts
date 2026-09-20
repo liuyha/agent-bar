@@ -94,6 +94,7 @@ describe('token statistics', () => {
     expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain('value="day"');
     expect(html.match(/class="statistics-period"/g)).toHaveLength(1);
     expect(html).toContain('aria-label="今日 Token 统计"');
+    expect(html).not.toContain('昨日');
     expect(html).not.toContain('aria-label="本周 Token 统计"');
     expect(html).not.toContain('aria-label="本月 Token 统计"');
     expect(html).not.toContain('3,000');

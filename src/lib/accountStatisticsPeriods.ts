@@ -18,6 +18,7 @@ export function accountStatisticsPeriod(
   range: StatisticsDateRange = emptyDateRange,
 ): AccountStatisticsPeriod {
   const start = new Date(now);
+  if (period === 'day') start.setDate(start.getDate() - 1);
   if (period === 'week') start.setDate(start.getDate() - (start.getDay() + 6) % 7);
   if (period === 'month' || period === 'year') start.setDate(1);
   if (period === 'year') start.setMonth(0);
@@ -26,7 +27,8 @@ export function accountStatisticsPeriod(
   const all = period === 'all' && !filtered;
   const valid = !filtered || !dateRangeError(range, now);
   const startDate = period === 'all' ? range.startDate || null : calendarDate(start);
-  const endDate = filtered && range.endDate && range.endDate < calendarDate(now) ? range.endDate : calendarDate(now);
+  const endDate = period === 'day' ? calendarDate(start)
+    : filtered && range.endDate && range.endDate < calendarDate(now) ? range.endDate : calendarDate(now);
   // Service dates are calendar dates: keep them as strings instead of parsing UTC midnight.
   const dailyUsage = !valid ? null : snapshot.dailyUsage?.filter(({ date }) => date <= endDate && (startDate === null || date >= startDate))
     .sort((left, right) => left.date.localeCompare(right.date)) ?? null;
