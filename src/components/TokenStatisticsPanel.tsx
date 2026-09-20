@@ -13,6 +13,8 @@ import { StatisticsDateRangeFilter } from './StatisticsDateRangeFilter';
 import { StatisticsPeriodSwitch } from './StatisticsPeriodSwitch';
 import { StatisticsErrorNotice } from './StatisticsErrorNotice';
 import { ActivityStatisticsSummary } from './ActivityStatisticsSummary';
+import { StatisticsTrendChart } from './StatisticsTrendChart';
+import { localStatisticsTrend } from '../lib/statisticsTrend';
 import type { AppSettings, CodexStatisticsPreference, ProviderId, TokenPeriod, TokenStatistics } from '../types';
 import './TokenStatisticsPanel.css';
 
@@ -57,6 +59,7 @@ export function StatisticsContent({ statistics, loading, error, selectedPeriod =
         <details className="statistics-token-details"><summary>Token 明细</summary><dl className="statistics-breakdown">{['输入（含缓存）', '输出', '缓存读取'].map((label) => <div key={label}><dt>{label}</dt><dd>—</dd></div>)}</dl></details>
       </section> : <div className="statistics-state" role="status"><p>暂无{periodLabels[selectedPeriod]}统计数据。</p></div>}
     </div>
+    <StatisticsTrendChart data={localStatisticsTrend(statistics, selectedPeriod, dateRange)} />
     <div className="statistics-updated">统计于 {ready ? formatTime(statistics.updatedAt) : '—'}</div>
   </>;
 }

@@ -76,6 +76,8 @@ export interface TokenStatistics {
   periods: TokenPeriod[];
   /** Missing in older caches; rebuilt from local history on refresh. */
   dailyPeriods?: TokenPeriod[] | null;
+  /** Sparse local hourly buckets for yesterday and today; absent in older caches. */
+  hourlyPeriods?: TokenPeriod[] | null;
   /** Optional while reading a summary saved before activity statistics were introduced. */
   activity?: ActivityStatistics | null;
   updatedAt: string;

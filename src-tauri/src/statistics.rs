@@ -9,6 +9,7 @@ mod activity;
 mod activity_tests;
 mod cache;
 mod codex_history;
+mod hourly;
 mod pricing;
 
 use std::{
@@ -35,6 +36,10 @@ pub struct TokenStatistics {
     /// Sparse local-calendar daily buckets; absent in summaries saved by older versions.
     #[serde(default)]
     pub daily_periods: Option<Vec<TokenPeriod>>,
+    /// Sparse local-hour buckets from yesterday's midnight through collection time.
+    /// Absent in older saved summaries; never reconstructed from daily totals.
+    #[serde(default)]
+    pub hourly_periods: Option<Vec<TokenPeriod>>,
     pub updated_at: String,
     /// All retained local history, independently of the selected token period.
     #[serde(default)]
@@ -616,6 +621,25 @@ fn collect_roots(
             None => error.clone(),
         }),
     };
+    let hourly_periods = hourly::summarize(
+        provider,
+        status,
+        &Local,
+        end,
+        unique.values(),
+        turns.values().copied(),
+        cache
+            .files
+            .values()
+            .flat_map(|file| file.parsed.unknown_turns.iter().copied()),
+    );
+    let message = match &hourly_periods {
+        Ok(_) => message,
+        Err(error) => Some(match message {
+            Some(message) => format!("{message}；{error}"),
+            None => error.clone(),
+        }),
+    };
     let activity = activity::summarize(
         end.with_timezone(&Local),
         unique
@@ -638,6 +662,7 @@ fn collect_roots(
         message,
         periods,
         daily_periods: daily_periods.ok(),
+        hourly_periods: hourly_periods.ok(),
         updated_at: iso(windows[0].end),
         activity,
     }
@@ -1263,10 +1288,13 @@ mod tests {
         });
         let summary: TokenStatistics = serde_json::from_value(old.clone()).unwrap();
         assert!(summary.daily_periods.is_none());
+        assert!(summary.hourly_periods.is_none());
         let mut current = old;
         current["dailyPeriods"] = json!([]);
+        current["hourlyPeriods"] = json!([]);
         let summary: TokenStatistics = serde_json::from_value(current).unwrap();
         assert!(summary.daily_periods.unwrap().is_empty());
+        assert!(summary.hourly_periods.unwrap().is_empty());
     }
 
     #[test]
@@ -1314,6 +1342,12 @@ mod tests {
             }
             assert_eq!(result.periods[3].start_at, "2025-12-31T16:00:00.000Z");
             assert_eq!(result.periods[4].start_at, timestamps[0].0);
+            let hourly = result.hourly_periods.as_ref().unwrap();
+            // Both copied logs and future records were removed before hourly aggregation.
+            assert_eq!(hourly.len(), 1);
+            assert_eq!(hourly[0].total_tokens, 110);
+            assert_eq!(hourly[0].request_count, Some(1));
+            assert_eq!(hourly[0].conversation_turns, Some(1));
             let daily = result.daily_periods.as_ref().unwrap();
             let all = &result.periods[4];
             assert_eq!(

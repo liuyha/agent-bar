@@ -8,6 +8,8 @@ import { StatisticsDateRangeFilter } from './StatisticsDateRangeFilter';
 import { StatisticsPeriodSwitch } from './StatisticsPeriodSwitch';
 import { StatisticsErrorNotice } from './StatisticsErrorNotice';
 import { ActivityStatisticsSummary } from './ActivityStatisticsSummary';
+import { StatisticsTrendChart } from './StatisticsTrendChart';
+import { accountStatisticsTrend } from '../lib/statisticsTrend';
 import type { AccountUsageSnapshot, CodexStatisticsSource, TokenPeriod } from '../types';
 
 function fullTime(value: string | null): string {
@@ -60,6 +62,7 @@ export function AccountStatisticsContent({ statistics, loading, refreshing, erro
     <StatisticsPeriodSwitch labels={accountPeriodLabels} selectedPeriod={selectedPeriod} onPeriodChange={onPeriodChange} />
     {selectedPeriod === 'all' && <StatisticsDateRangeFilter value={dateRange} onChange={onDateRangeChange} />}
     <AccountPeriodStatistics statistics={ready ? statistics : null} selectedPeriod={selectedPeriod} dateRange={dateRange} />
+    <StatisticsTrendChart data={accountStatisticsTrend(ready ? statistics : null, selectedPeriod, dateRange)} />
     <div className="account-statistics-timestamps">
       <div className="statistics-updated">服务端更新于 {fullTime(ready ? statistics.serviceUpdatedAt : null)}</div>
       <div className="statistics-updated">采集于 {fullTime(ready ? statistics.updatedAt : null)}</div>
